@@ -15,7 +15,7 @@ Inductive eval_name : seq (option term) -> term -> seq (option term) -> term -> 
       eval_name H (Abs t0) H (Abs t0)
   | eval_name_let H H' ts t v :
       let s := scat (mkseq (Loc \o addn (size H)) (size ts)) Var in
-      eval_name (H ++ map (@Some _ \o subst s) ts) (subst s t) H' v ->
+      eval_name (H ++ map (Some \o subst s) ts) (subst s t) H' v ->
       eval_name H (Let ts t) H' v.
 
 CoInductive diverge_name : seq (option term) -> term -> Prop :=
@@ -32,7 +32,7 @@ CoInductive diverge_name : seq (option term) -> term -> Prop :=
       diverge_name H (App t1 t2)
   | diverge_name_let H ts t :
       let s := scat (mkseq (Loc \o addn (size H)) (size ts)) Var in
-      diverge_name (H ++ map (@Some _ \o subst s) ts) (subst s t) ->
+      diverge_name (H ++ map (Some \o subst s) ts) (subst s t) ->
       diverge_name H (Let ts t).
 
 Inductive red_name : seq (option term) -> term -> seq (option term) -> term -> Prop :=
@@ -46,7 +46,7 @@ Inductive red_name : seq (option term) -> term -> seq (option term) -> term -> P
       red_name H (App (Abs t11) t2) (rcons H (Some t2)) (subst (scons (Loc (size H)) Var) t11)
   | red_name_let H ts t :
       let s := scat (mkseq (Loc \o addn (size H)) (size ts)) Var in
-      red_name H (Let ts t) (H ++ map (@Some _ \o subst s) ts) (subst s t).
+      red_name H (Let ts t) (H ++ map (Some \o subst s) ts) (subst s t).
 
 Inductive wf_term (p : nat -> Prop) : term -> Prop :=
   | wf_term_loc l :
@@ -142,28 +142,11 @@ Proof.
   exact: eval_name_diverge_name_disjoint.
 Qed.
 
-Lemma eval_name_heap H H' t v :
-  eval_name H t H' v ->
-  forall l t,
-  nth None H l = Some t ->
-  nth None H' l = Some t.
-Proof.
-  (induction 1; eauto) => l ? Hnth; eauto.
-  - apply: IHeval_name2.
-    by move: nth_rcons (leqP (size H') l) (IHeval_name1 _ _ Hnth) =>
-      -> [ /(nth_default _) -> | ].
-  - apply: IHeval_name.
-    by move: nth_cat (leqP (size H) l) Hnth =>
-      -> [ /(@nth_default _ _) -> | ].
-Qed.
-
-Hint Resolve eval_name_heap.
-
 Lemma red_name_appLseq H H' t2s : forall t1 t1',
   red_name H t1 H' t1' ->
   red_name H (foldl App t1 t2s) H' (foldl App t1' t2s).
 Proof. induction t2s => ? ? //= /red_name_appL. eauto. Qed.
-  
+
 Lemma red_name_appL_multi_aux p p' t2 :
   clos_refl_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) p p' ->
   forall H H' t1 t1',
@@ -222,6 +205,16 @@ Proof.
   by case (leqP (size H) l0) => [ /(nth_default _) -> | ].
 Qed.
 
+Lemma red_name_multi_heap p p' :
+  clos_refl_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) p p' ->
+  forall l t,
+  nth None p.1 l = Some t ->
+  nth None p'.1 l = Some t.
+Proof.
+  induction 1; eauto.
+  apply: red_name_heap. eauto.
+Qed.
+
 Theorem eval_name_red_name_multi H t H' v :
   eval_name H t H' v ->
   clos_refl_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) (H, t) (H', v).
@@ -233,6 +226,15 @@ Proof.
       (rt_trans _ _ _ (_, _) _ (rt_step _ _ _ _ _) _)) => /=; eauto.
   - refine (rt_trans _ _ _ (_, _) _ (rt_step _ _ _ _ _) _) => /=; eauto.
 Qed.
+
+Corollary eval_name_heap H H' t v :
+  eval_name H t H' v ->
+  forall l t,
+  nth None H l = Some t ->
+  nth None H' l = Some t.
+Proof. by move => /eval_name_red_name_multi /red_name_multi_heap. Qed.
+
+Hint Resolve eval_name_heap.
 
 Lemma red_name_eval_name H t H' t' :
   red_name H t H' t' ->
@@ -276,20 +278,18 @@ Proof.
     destruct y.
     move: H2 => /clos_rt_rt1n_iff /red_name_multi_eval_name. eauto 7.
 Qed.
-  
+
 Lemma diverge_name_red_name_aux p p' :
   clos_refl_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) p p' ->
   forall H H' t t',
   p = (H, t) ->
   p' = (H', t') ->
   diverge_name H t ->
-  exists H'' t'', red_name H' t' H'' t''.
+  diverge_name H' t'.
 Proof.
   move => /clos_rt_rt1n_iff Hrt.
-  induction Hrt; inversion 1; inversion 1; subst =>
-    [ /diverge_reducible [ ? [ ? [ ] ] ] ]; eauto.
-  destruct y => [ /(red_name_det _ _ _ _ H) /= [ ? ? ] ].
-  subst. eauto.
+  induction Hrt; inversion 1; inversion 1; subst; eauto.
+  destruct y => [ /diverge_reducible [ ? [ ? [ /(red_name_det _ _ _ _ H) /= [ <- <- ] ] ] ] ]; eauto.
 Qed.
 
 Theorem diverge_name_red_name H t :
@@ -297,7 +297,11 @@ Theorem diverge_name_red_name H t :
   forall H' t',
   clos_refl_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) (H, t) (H', t') ->
   exists H'' t'', red_name H' t' H'' t''.
-Proof. move => ? ? ? /diverge_name_red_name_aux. by apply. Qed.
+Proof.
+  move => Hdiv ? ?
+    /diverge_name_red_name_aux /(_ _ _ _ _ erefl erefl Hdiv)
+    /diverge_reducible [ ? [ ? [ ] ] ]. eauto.
+Qed.
 
 Theorem red_name_multi_diverge_name :
   forall H t,
@@ -315,25 +319,22 @@ Proof.
     apply: Hdiv.
     refine (rt_trans _ _ _ (_, _) _ (rt_step _ _ _ _ _) _) => /=; eauto.
   - move: (Hdiv _ _ (rt_refl _ _ _)) => [ ? [ ] ]; inversion 1.
-  - case (classic (exists H' t1',
-      clos_refl_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) (H, t1) (H', t1') /\
-      forall H'' t1'', red_name H' t1' H'' t1'' -> False)) =>
-      [ [ ? [ ? [ Hrt Hnf ] ] ] | Hdiv1 ].
-    { case: (Hdiv _ _ (red_name_appL_multi _ _ _ _ _ Hrt)) => ? [ ];
-      inversion 1; subst.
-      - by move: (Hnf _ _ H6).
-      - apply: diverge_name_appabs.
-        + apply: red_name_multi_eval_name; eauto.
-        + apply: red_name_multi_diverge_name => ? ? ?.
-          apply: Hdiv.
-          refine (rt_trans _ _ _ (_, _) _
-            (red_name_appL_multi _ _ _ _ _ _)
-            (rt_trans _ _ _ (_, _) _ (rt_step _ _ _ _ _) _)) => /=; eauto. }
+  - case (classic (exists H' v1, eval_name H t1 H' v1)) =>
+      [ [ ? [ ? Heval ] ] | Hdiv1 ].
+    { move: (eval_name_value _ _ _ _ Heval). inversion 1. subst.
+      apply: diverge_name_appabs; eauto.
+      apply: red_name_multi_diverge_name => ? ? ?.
+      apply: Hdiv.
+      refine (rt_trans _ _ _ (_, _) _ _ _).
+      - apply: red_name_appL_multi.
+        apply: eval_name_red_name_multi. eauto.
+      - refine (rt_trans _ _ _ (_, _) _ (rt_step _ _ _ _ _) _) => /=; eauto. }
     { apply: diverge_name_appL.
-      apply: red_name_multi_diverge_name => ? t1' Hrt.
+      apply: red_name_multi_diverge_name => ? ? Hrt.
       move: (Hdiv _ _ (red_name_appL_multi _ _ _ _ _ Hrt)) => [ ? [ ] ];
       inversion 1; subst; eauto.
-      case Hdiv1. repeat (eexists; eauto). inversion 1. }
+      case Hdiv1. repeat eexists.
+      apply: red_name_multi_eval_name; eauto. }
   - apply: diverge_name_let.
     apply: red_name_multi_diverge_name => ? ? ?.
     apply: Hdiv.
@@ -436,19 +437,21 @@ Lemma wf_heap_segment_weaken (p p' q q' : nat -> Prop) H H' :
   wf_heap_segment p q H ->
   ( forall l, p' l -> p l ) ->
   ( forall l, q l -> q' l ) ->
-  ( forall l t, 
-    nth None H l = Some t -> 
+  ( forall l, p' l ->
+    forall t,
+    nth None H l = Some t ->
     nth None H' l = Some t ) ->
   wf_heap_segment p' q' H'.
 Proof.
-  move => Hwf Hdom ? Hext ? /Hdom /Hwf [ ? [ /Hext -> ] ].
+  move => Hwf Hdom ? Hext ? Hp.
+  move: (Hp) => /Hdom /Hwf [ ? [ /(Hext _ Hp) -> ] ].
   eauto using wf_term_impl.
 Qed.
 
 Definition wf_heap_segment_dom p p' q H Hwf Hdom :=
-  wf_heap_segment_weaken p p' q _ H _ Hwf Hdom (fun _ H => H) (fun _ _ H => H).
+  wf_heap_segment_weaken p p' q _ H _ Hwf Hdom (fun _ H => H) (fun _ _ _ H => H).
 Definition wf_heap_segment_cod p q q' H Hwf Hcod :=
-  wf_heap_segment_weaken p _ q q' H _ Hwf (fun _ H => H) Hcod (fun _ _ H => H).
+  wf_heap_segment_weaken p _ q q' H _ Hwf (fun _ H => H) Hcod (fun _ _ _ H => H).
 Definition wf_heap_segment_ext p p' H H' Hwf :=
   wf_heap_segment_weaken p _ p' _ H H' Hwf (fun _ H => H) (fun _ H => H).
 
@@ -676,7 +679,7 @@ Proof.
     repeat (eexists; eauto).
     refine (rt_trans _ _ _ (_, _) _ (rt_step _ _ _ _ _) _) => /=; eauto.
 Qed.
-    
+
 Theorem eval_name_iso_heap H1 H1' t1 v1
   (Heval : eval_name H1 t1 H1' v1) R H2 t2
   (Hterm : corr_term R t1 t2)
@@ -710,15 +713,15 @@ Proof.
   exact: clos_t1n_trans.
 Qed.
 
-Lemma diverge_name_iso_heap_aux p p' :
+Lemma diverge_name_red_name_cycle_aux p p' :
   clos_refl_trans_1n _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) p p' ->
-  forall t2s R H1 H1' H2 t1 t1' t2,
-  p = (H1, t1) ->
-  p' = (H2, t2) ->
+  forall t2s R H1 H1' H2' t1 t1' t2',
+  p = (H1', t1') ->
+  p' = (H2', t2') ->
   corr_term R t1 t1' ->
   iso_heap R H1 H1' ->
   clos_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) (H1, t1) (H1', foldl App t1' t2s) ->
-  exists R' H2' t2',
+  exists R' H2 t2,
   clos_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) (H2, t2) (H2', foldl App t2' t2s) /\
   corr_term R' t2 t2' /\
   iso_heap R' H2 H2' /\
@@ -727,9 +730,9 @@ Proof.
   induction 1; inversion 1; inversion 1; subst => [ Hterm Hheap ].
   - repeat (eexists; eauto).
   - destruct y => /(clos_trans_clos_refl_trans_1n _ _ _ _) [ [ H1_ t1_ ] /= [ Hred Hrt ] ].
-    case: (red_name_det _ _ _ _ H _ _ Hred) => /= ? ?. subst.
     move: (red_name_iso_heap _ _ _ _ Hred _ _ _  Hterm Hheap) =>
       [ R' [ H1'_ [ t1'_ [ Hterm' [ Hheap' [ Hred' ? ] ] ] ] ] ].
+    case: (red_name_det _ _ _ _ H _ _ Hred') => /= ? ?. subst.
     have Hrt' : clos_trans _
       (fun p p' => red_name p.1 p.2 p'.1 p'.2) (H1_, t1_) (H1'_, foldl App t1'_ t2s).
     { apply: clos_rt_t; eauto.
@@ -740,15 +743,19 @@ Proof.
     repeat (eexists; eauto).
 Qed.
 
-Lemma diverge_name_iso_heap R H H' t t1 t2s :
+Lemma diverge_name_red_name_cycle R H H' t t1 t2s :
   iso_heap R H H' ->
   corr_term R t t1 ->
   clos_trans _ (fun p p' => red_name p.1 p.2 p'.1 p'.2) (H, t) (H', foldl App t1 t2s) ->
-  diverge_name H t.
+  diverge_name H' t1.
 Proof.
   move => Hheap Hterm Ht.
-  apply: red_name_multi_diverge_name => ? ? /clos_rt_rt1n_iff Hrt.
-  move: (diverge_name_iso_heap_aux _ _ Hrt _ _ _ _ _ _ _ _ erefl erefl Hterm Hheap Ht) =>
-    [ ? [ ? [ ? [ /(clos_trans_clos_refl_trans_1n _ _ _ _) [ [ ? ? ] /= [ ? ? ] ] ] ] ] ];
+  apply: red_name_multi_diverge_name => ? ? Hrt.
+  move: (diverge_name_red_name_cycle_aux _ _
+    (clos_rt_rt1n _ _ _ _ Hrt) _ _ _ _ _ _ _ _ erefl erefl Hterm Hheap Ht) =>
+  [ ? [ ? [ ? [ Ht' [ Hterm' [ Hheap' ? ] ] ] ] ] ].
+  move: (clos_trans_clos_refl_trans_1n _ _ _ _ Ht') =>
+    [ ? [ /red_name_iso_heap /(_ _ _ _ Hterm' Hheap')
+      [ ? [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ] ] ] ].
   repeat (eexists; eauto).
 Qed.
