@@ -9,24 +9,24 @@ Inductive eval_need : seq (option term) -> term -> seq (option term) -> term -> 
       eval_need H (Loc l) (set_nth None H' l (Some v)) v
   | eval_need_app H H' H'' t0 t1 t2 v :
       eval_need H t1 H' (Abs t0) ->
-      eval_need H' (subst (scons t2 Var) t0) H'' v ->
+      eval_need (rcons H' (Some t2)) (subst (scons (Loc (size H')) Var) t0) H'' v ->
       eval_need H (App t1 t2) H'' v
   | eval_need_abs H t0 :
       eval_need H (Abs t0) H (Abs t0)
   | eval_need_let H H' ts t v :
       let s := scat (mkseq (Loc \o addn (size H)) (size ts)) Var in
-      eval_need (H ++ map (@Some _ \o subst s) ts) (subst s t) H' v ->
+      eval_need (H ++ map (Some \o subst s) ts) (subst s t) H' v ->
       eval_need H (Let ts t) H' v
-  | eval_need_ctor H c ts :
-      eval_need H (Ctor c ts) H (Ctor c ts)
-  | eval_need_case H H' H'' c i t t0 ts pts v :
-      eval_need H t H' (Ctor c ts) ->
-      ( forall d, nth d pts i = (c, size ts, t0) ) ->
-      ( forall j, j < i ->
-        forall d t0, 
-        nth d pts j = (c, size ts, t0) ->
-        False ) ->
-      eval_need H' (subst (scat ts Var) t0) H'' v ->
+  | eval_need_vcons H c ls :
+      eval_need H (VCons c ls) H (VCons c ls)
+  | eval_need_cons H c ts :
+      eval_need H (Cons c ts) (H ++ map Some ts)
+        (VCons c (mkseq (addn (size H)) (size ts)))
+  | eval_need_case H H' H'' i c ls t t0 pts v :
+      eval_need H t H' (VCons c ls) ->
+      (forall d, nth d pts i = (c, size ls, t0)) ->
+      (forall j d t0, nth d pts j = (c, size ls, t0) -> i <= j) ->
+      eval_need H' (subst (scat (map Loc ls) Var) t0) H'' v ->
       eval_need H (Case t pts) H'' v.
 
 CoInductive diverge_need : seq (option term) -> term -> Prop :=
@@ -37,25 +37,22 @@ CoInductive diverge_need : seq (option term) -> term -> Prop :=
   | diverge_need_appL H t1 t2 :
       diverge_need H t1 ->
       diverge_need H (App t1 t2)
-  | diverge_need_appabs H H' t0 t1 t2 :
+  | diverge_need_beta H H' t0 t1 t2 :
       eval_need H t1 H' (Abs t0) ->
-      diverge_need H' (subst (scons t2 Var) t0) ->
+      diverge_need (rcons H' (Some t2)) (subst (scons (Loc (size H')) Var) t0) ->
       diverge_need H (App t1 t2)
   | diverge_need_let H ts t :
       let s := scat (mkseq (Loc \o addn (size H)) (size ts)) Var in
-      diverge_need (H ++ map (@Some _ \o subst s) ts) (subst s t) ->
+      diverge_need (H ++ map (Some \o subst s) ts) (subst s t) ->
       diverge_need H (Let ts t)
   | diverge_need_case H t pts :
       diverge_need H t ->
       diverge_need H (Case t pts)
-  | diverge_need_casematch H H' c i t t0 ts pts :
-      eval_need H t H' (Ctor c ts) ->
-      ( forall d, nth d pts i = (c, size ts, t0) ) ->
-      ( forall j, j < i ->
-        forall d t0, 
-        nth d pts j = (c, size ts, t0) ->
-        False ) ->
-      diverge_need H' (subst (scat ts Var) t0) ->
+  | diverge_need_casematch H H' i c ls t t0 pts :
+      eval_need H t H' (VCons c ls) ->
+      (forall d, nth d pts i = (c, size ls, t0)) ->
+      (forall j d t0, nth d pts j = (c, size ls, t0) -> i <= j) ->
+      diverge_need H' (subst (scat (map Loc ls) Var) t0) ->
       diverge_need H (Case t pts).
 
 Inductive cycle_need : seq (option term) -> term -> Prop :=
@@ -69,25 +66,22 @@ Inductive cycle_need : seq (option term) -> term -> Prop :=
   | cycle_need_appL H t1 t2 :
       cycle_need H t1 ->
       cycle_need H (App t1 t2)
-  | cycle_need_appabs H H' t0 t1 t2 :
+  | cycle_need_beta H H' t0 t1 t2 :
       eval_need H t1 H' (Abs t0) ->
-      cycle_need H' (subst (scons t2 Var) t0) ->
+      cycle_need (rcons H' (Some t2)) (subst (scons (Loc (size H')) Var) t0) ->
       cycle_need H (App t1 t2)
   | cycle_need_let H ts t :
       let s := scat (mkseq (Loc \o addn (size H)) (size ts)) Var in
-      cycle_need (H ++ map (@Some _ \o subst s) ts) (subst s t) ->
+      cycle_need (H ++ map (Some \o subst s) ts) (subst s t) ->
       cycle_need H (Let ts t)
   | cycle_need_case H t pts :
       cycle_need H t ->
       cycle_need H (Case t pts)
-  | cycle_need_casematch H H' c i t t0 ts pts :
-      eval_need H t H' (Ctor c ts) ->
-      ( forall d, nth d pts i = (c, size ts, t0) ) ->
-      ( forall j, j < i ->
-        forall d t0, 
-        nth d pts j = (c, size ts, t0) ->
-        False ) ->
-      cycle_need H' (subst (scat ts Var) t0) ->
+  | cycle_need_casematch H H' i c ls t t0 pts :
+      eval_need H t H' (VCons c ls) ->
+      (forall d, nth d pts i = (c, size ls, t0)) ->
+      (forall j d t0, nth d pts j = (c, size ls, t0) -> i <= j) ->
+      cycle_need H' (subst (scat (map Loc ls) Var) t0) ->
       cycle_need H (Case t pts).
 
 Definition consistent_segment (R R' : nat -> nat -> Prop) H2 :=
@@ -141,9 +135,8 @@ Proof.
   - case: (IHeval_need1 _ _ H5) => ?. inversion 1. subst. eauto.
   - case: (IHeval_need1 _ _ H6). inversion 2. subst.
     have ? : i = i0.
-    { by case: (ltngtP i i0) =>
-        [ /H9 /(_ (0, 0, Var 0) _ (H0 _))
-        | /H1 /(_ (0, 0, Var 0) _ (H7 _)) | ]. } subst.
+    { apply: anti_leq.
+      by rewrite (H9 _ _ _ (H0 (0, 0, Var 0))) (H1 _ _ _ (H7 (0, 0, Var 0))). } subst.
     move: (H0 (0, 0, Var 0)) (H7 (0, 0, Var 0)) => ->.
     inversion 1. subst. eauto.
 Qed.
@@ -160,9 +153,8 @@ Proof.
   - case: (eval_need_det _ _ _ _ H0_ _ _ H6).
     inversion 2. subst.
     have ? : i = i0.
-    { by case: (ltngtP i i0) =>
-        [ /H9 /(_ (0, 0, Var 0) _ (H0 _))
-        | /H1 /(_ (0, 0, Var 0) _ (H7 _)) | ]. } subst.
+    { apply: anti_leq.
+      by rewrite (H9 _ _ _ (H0 (0, 0, Var 0))) (H1 _ _ _ (H7 (0, 0, Var 0))). } subst.
     move: (H0 (0, 0, Var 0)) (H7 (0, 0, Var 0)) => ->.
     inversion 1. subst. eauto.
 Qed.
@@ -178,9 +170,8 @@ Proof.
   - case: (eval_need_det _ _ _ _ H0_ _ _ H6).
     inversion 2. subst.
     have ? : i = i0.
-    { by case: (ltngtP i i0) =>
-        [ /H9 /(_ (0, 0, Var 0) _ (H0 _))
-        | /H1 /(_ (0, 0, Var 0) _ (H7 _)) | ]. } subst.
+    { apply: anti_leq.
+      by rewrite (H9 _ _ _ (H0 (0, 0, Var 0))) (H1 _ _ _ (H7 (0, 0, Var 0))). } subst.
     move: (H0 (0, 0, Var 0)) (H7 (0, 0, Var 0)) => ->.
     inversion 1. subst. eauto.
 Qed.
@@ -200,9 +191,8 @@ Proof.
   - case: (eval_need_det _ _ _ _ H0 _ _ H8).
     inversion 2. subst.
     have ? : i = i0.
-    { by case: (ltngtP i i0) =>
-        [ /H11 /(_ (0, 0, Var 0) _ (H1 _))
-        | /H2 /(_ (0, 0, Var 0) _ (H9 _)) | ]. } subst.
+    { apply: anti_leq.
+      by rewrite (H11 _ _ _ (H1 (0, 0, Var 0))) (H2 _ _ _ (H9 (0, 0, Var 0))). } subst.
     move: (H1 (0, 0, Var 0)) (H9 (0, 0, Var 0)) => ->.
     inversion 1. subst. eauto.
 Qed.
@@ -692,20 +682,64 @@ Proof.
         - case (@eqP _ l1 l) => [ -> | // ].
           by rewrite H0. }
       { move => ? ? [ ]; eauto. }
-  - move: (IHeval_need1 _ _ _ _ (cons (context_app t2') \o C) H3 H7 Hcorr Hhole) =>
+  - move: (IHeval_need1 _ _ _ _ (List.cons (context_app t2') \o C) H3 H7 Hcorr Hhole) =>
       [ R' [ S' [ H2' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' Himpl ] ] ].
+    have Himpl' : forall l1 l2,
+      R' l1 l2 \/ S' l1 l2 ->
+      (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2.
+    { move => ? ? [ ]; eauto. }
+    have Hiso'' : iso_heap_segment
+      (fun l1 l2 => l1 = size H' /\ l2 = size H2')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t2))
+      (rcons H2' (Some t2')).
+    { move => ? ? [ -> -> ].
+      rewrite !nth_rcons !ltnn !eqxx.
+      repeat eexists. eauto using corr_term_impl. }
+    have Hcon'' : consistent
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H2' (Some t2')).
+    { apply: (consistent_segment_dom (fun l1 l2 => (R' l1 l2 \/ S' l1 l2) \/ l1 = size H' /\ l2 = size H2')).
+      - apply: consistent_segment_union.
+        + apply: consistent_segment_rcons.
+          apply: consistent_segment_cod; eauto.
+        + apply: iso_heap_segment_comp; eauto.
+          apply: iso_heap_segment_sym. eauto.
+        + move => ? ? ? HRS [ ? ? ]. subst.
+          case HRS =>
+            [ /(corr_heap_segment_boundL _ _ _ _ Hcorr')
+            | /(trace_segment_boundL _ _ _ _ _ _ Hhole') ];
+          by rewrite ltnn.
+      - move => ? ? [ [ | ] | ]; eauto. }
     have Hterm'' : corr_term
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2)
-      (subst (scons t2 Var) t0)
-      (subst (scons t2' Var) t').
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (subst (scons (Loc (size H')) Var) t0)
+      (subst (scons (Loc (size H2')) Var) t').
     { apply: corr_term_subst => [ | [ | ? ] ] /=; eauto.
       apply: corr_term_impl; eauto. }
+    have Hcorr'' : corr_heap_segment
+      (fun l1 l2 => R' l1 l2 \/ l1 = size H' /\ l2 = size H2')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t2))
+      (rcons H2' (Some t2')).
+    { apply: corr_heap_segment_union.
+      - apply: corr_heap_segment_rconsL.
+        apply: corr_heap_segment_cod.
+        + apply: corr_heap_segment_rconsR; eauto.
+          move => /=. eauto.
+        + eauto.
+      - apply: iso_heap_segment_corr_heap_segment. eauto. }
     have Hhole'' : trace_segment S'
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H' H2'
-      (subst (scons t2' Var) t') C.
-    { exact: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). }
-    move: (IHeval_need2 _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'') =>
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t2))
+      (rcons H2' (Some t2'))
+      (subst (scons (Loc (size H2')) Var) t') C.
+    { apply: (trace_segment_weaken _ _ _ _ _ _ _ _ _ _
+        (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _)) =>
+      [ | | ? ? [ ] | ? ? /(trace_segment_boundL _ _ _ _ _ _ Hhole') Hlt | ]; eauto.
+      by rewrite size_rcons ltnS nth_rcons Hlt (ltnW Hlt). }
+    move: (IHeval_need2 _ _ _ _ _ Hcon'' Hterm'' Hcorr'' Hhole'') =>
       [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ] ] ] ] ].
     repeat (eexists; eauto).
   - repeat (eexists; eauto).
@@ -806,7 +840,85 @@ Proof.
       [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ] ] ] ] ].
     repeat (eexists; eauto).
   - repeat (eexists; eauto).
-  - move: (IHeval_need1 _ _ _ _ (cons (context_case pts') \o C) H5 H9 Hcorr Hhole) =>
+  - have Himpl : forall l1 l2,
+      R l1 l2 \/ S l1 l2 ->
+      ( R l1 l2 \/
+        exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n ) \/
+      S l1 l2.
+    { move => ? ? [ ]; eauto. }
+    have Hiso' : iso_heap_segment
+      (fun l1 l2 => exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n )
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n ) \/
+        S l1 l2 )
+      (H ++ map Some ts) (H2 ++ map Some ts').
+    { move => ? ? [ x [ ? [ -> -> ] ] ].
+      rewrite !nth_cat !ltnNge !leq_addr !addKn !(nth_map (Var 0)); try congruence.
+      repeat eexists. eauto using corr_term_impl. }
+    have Hcon' : consistent
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n ) \/
+        S l1 l2 )
+      (H2 ++ map Some ts').
+    { apply: (consistent_segment_dom
+        (fun l1 l2 =>
+          ( R l1 l2 \/ S l1 l2 ) \/
+          exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n)).
+      - apply: consistent_segment_union.
+        + apply: consistent_segment_cat.
+          apply: consistent_segment_cod; eauto.
+        + apply: iso_heap_segment_comp; eauto.
+          apply: iso_heap_segment_sym. eauto.
+        + move => ? ? ? HRS [ ? [ Hlt [ ? ? ] ] ]. subst.
+          case HRS =>
+            [ /(corr_heap_segment_boundL _ _ _ _ Hcorr)
+            | /(trace_segment_boundL _ _ _ _ _ _ Hhole) ];
+          by rewrite ltnNge leq_addr.
+      - move => ? ? [ [ ] | ]; eauto. }
+    have Hterm' : corr_term
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n ) \/
+        S l1 l2)
+      (VCons c (mkseq (addn (size H)) (size ts)))
+      (VCons c (mkseq (addn (size H2)) (size ts'))).
+    { (constructor; rewrite !size_mkseq) => [ | ? ? ? ];
+      rewrite ?nth_mkseq -?H5; eauto 6. }
+    have Hcorr' : corr_heap_segment
+      (fun l1 l2 =>
+        R l1 l2 \/
+        exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n)
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n ) \/
+        S l1 l2 )
+      (H ++ map Some ts) (H2 ++ map Some ts').
+    { apply: corr_heap_segment_union.
+      - apply: corr_heap_segment_catL.
+        apply: corr_heap_segment_cod.
+        + apply: corr_heap_segment_catR; eauto.
+          move => /=. eauto.
+        + eauto.
+      - apply: iso_heap_segment_corr_heap_segment. eauto. }
+    have Hhole' : trace_segment S
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n ) \/
+        S l1 l2 )
+      (H ++ map Some ts) (H2 ++ map Some ts')
+      (VCons c (mkseq (addn (size H2)) (size ts'))) C.
+    { apply: (trace_segment_weaken _ _ _ _ _ _ _ _ _ _
+        (trace_segment_red_name _ _ _ _ _ _ _ _ Hhole _)) =>
+      [ | | ? ? [ ] | ? ? /(trace_segment_boundL _ _ _ _ _ _ Hhole) Hlt | ]; eauto.
+      by rewrite size_cat nth_cat Hlt (ltn_addr _ Hlt). }
+    exists
+      ( fun l1 l2 =>
+        R l1 l2 \/
+        exists n, n < size ts /\ l1 = size H + n /\ l2 = size H2 + n ), S,
+      (H2 ++ map Some ts'), (VCons c (mkseq (addn (size H2)) (size ts'))). eauto 6.
+  - move: (IHeval_need1 _ _ _ _ (List.cons (context_case pts') \o C) H5 H9 Hcorr Hhole) =>
       [ R' [ S' [ H2' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' ? ] ] ].
     have Hlt : i < size pts.
@@ -814,11 +926,11 @@ Proof.
         [ /(nth_default _) -> | // ].
       inversion 1. subst.
       by move: (PeanoNat.Nat.neq_succ_diag_l _ H14). }
-    have ? : forall d, nth d pts' i = (c, size ts', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
+    have ? : forall d, nth d pts' i = (c, size ls', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
     { rewrite (surjective_pairing (nth d pts' i)) -H12 -H11 H1.
       do 2 f_equal. apply: set_nth_default. congruence. }
-    have ? : forall j, j < i -> forall d t1, nth d pts' j = (c, size ts', t1) -> False => [ j Hlt' d | ].
-    { move: (H2 _ Hlt' d).
+    have ? : forall j d t1, nth d pts' j = (c, size ls', t1) -> i <= j => [ j d | ].
+    { move: (H2 j d).
       rewrite
         (surjective_pairing (nth d pts j))
         (surjective_pairing (nth d pts' j)) H11 H12 => Hcontra.
@@ -826,18 +938,19 @@ Proof.
       apply: Hcontra. f_equal. eauto. }
     have Hterm'' : corr_term
       (fun l1 l2 : nat => R' l1 l2 \/ S' l1 l2)
-      (subst (scat ts Var) t0)
-      (subst (scat ts' Var) (nth (0, 0, Var 0) pts' i).2).
+      (subst (scat (map Loc ls) Var) t0)
+      (subst (scat (map Loc ls') Var) (nth (0, 0, Var 0) pts' i).2).
     { apply: corr_term_subst => [ | x ].
       - move: H1 (H13 _ Hlt (0, 0, Var 0)) => ->.
         eauto using corr_term_impl.
-      - rewrite !nth_scat H12.
-        case (leqP (size ts) x) => ?.
-        + rewrite !nth_default -?H12; eauto.
-        + eauto using corr_term_impl. }
+      - rewrite !nth_scat.
+        case (leqP (size ls) x) => ?.
+        + rewrite !nth_default !size_map -?H12; eauto.
+        + rewrite !(nth_map 0) -?H12;
+          eauto using corr_term_impl. }
     have Hhole'' : trace_segment S'
       (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H' H2'
-      (subst (scat ts' Var) (nth (0, 0, Var 0) pts' i).2) C.
+      (subst (scat (map Loc ls') Var) (nth (0, 0, Var 0) pts' i).2) C.
     { apply: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). eauto. }
     move: (IHeval_need2 _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'') =>
       [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ] ] ] ] ].
@@ -904,22 +1017,66 @@ Proof.
     + case: (value_diverge_need_disjoint _ _
         (corr_term_valueR _ _ _ Hterm (eval_name_value _ _ _ _ Hcbn)) H3).
   - apply: diverge_name_appL.
-    apply: (diverge_need_sound _ _ H2 _ _ _ _ (cons (context_app t2') \o C)); eauto.
-  - move: (eval_need_sound _ _ _ _ H2 _ _ _ _ (cons (context_app t2') \o C) H0 H7 Hcorr Hhole) =>
+    apply: (diverge_need_sound _ _ H2 _ _ _ _ (List.cons (context_app t2') \o C)); eauto.
+  - move: (eval_need_sound _ _ _ _ H2 _ _ _ _ (List.cons (context_app t2') \o C) H0 H7 Hcorr Hhole) =>
       [ R' [ S' [ H2' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' Himpl ] ] ].
+    have Himpl' : forall l1 l2,
+      R' l1 l2 \/ S' l1 l2 ->
+      (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2.
+    { move => ? ? [ ]; eauto. }
+    have Hiso'' : iso_heap_segment
+      (fun l1 l2 => l1 = size H' /\ l2 = size H2')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t3))
+      (rcons H2' (Some t2')).
+    { move => ? ? [ -> -> ].
+      rewrite !nth_rcons !ltnn !eqxx.
+      repeat eexists. eauto using corr_term_impl. }
+    have Hcon'' : consistent
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H2' (Some t2')).
+    { apply: (consistent_segment_dom (fun l1 l2 => (R' l1 l2 \/ S' l1 l2) \/ l1 = size H' /\ l2 = size H2')).
+      - apply: consistent_segment_union.
+        + apply: consistent_segment_rcons.
+          apply: consistent_segment_cod; eauto.
+        + apply: iso_heap_segment_comp; eauto.
+          apply: iso_heap_segment_sym. eauto.
+        + move => ? ? ? HRS [ ? ? ]. subst.
+          case HRS =>
+            [ /(corr_heap_segment_boundL _ _ _ _ Hcorr')
+            | /(trace_segment_boundL _ _ _ _ _ _ Hhole') ];
+          by rewrite ltnn.
+      - move => ? ? [ [ | ] | ]; eauto. }
     have Hterm'' : corr_term
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2)
-      (subst (scons t3 Var) t0)
-      (subst (scons t2' Var) t').
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (subst (scons (Loc (size H')) Var) t0)
+      (subst (scons (Loc (size H2')) Var) t').
     { apply: corr_term_subst => [ | [ | ? ] ] /=; eauto.
       apply: corr_term_impl; eauto. }
+    have Hcorr'' : corr_heap_segment
+      (fun l1 l2 => R' l1 l2 \/ l1 = size H' /\ l2 = size H2')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t3))
+      (rcons H2' (Some t2')).
+    { apply: corr_heap_segment_union.
+      - apply: corr_heap_segment_rconsL.
+        apply: corr_heap_segment_cod.
+        + apply: corr_heap_segment_rconsR; eauto.
+          move => /=. eauto.
+        + eauto.
+      - apply: iso_heap_segment_corr_heap_segment. eauto. }
     have Hhole'' : trace_segment S'
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H' H2'
-      (subst (scons t2' Var) t') C.
-    { exact: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). }
-    refine (diverge_name_appabs _ _ _ _ _ _
-      (diverge_need_sound _ _ _ _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'')); eauto.
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t3))
+      (rcons H2' (Some t2'))
+      (subst (scons (Loc (size H2')) Var) t') C.
+    { apply: (trace_segment_weaken _ _ _ _ _ _ _ _ _ _
+        (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _)) =>
+      [ | | ? ? [ ] | ? ? /(trace_segment_boundL _ _ _ _ _ _ Hhole') Hlt | ]; eauto.
+      by rewrite size_rcons ltnS nth_rcons Hlt (ltnW Hlt). }
+    refine (diverge_name_beta _ _ _ _ _ _
+      (diverge_need_sound _ _ _ _ _ _ _ _ Hcon'' Hterm'' Hcorr'' Hhole'')); eauto.
   - have Himpl : forall l1 l2,
       R l1 l2 \/ S l1 l2 ->
       ( R l1 l2 \/
@@ -1016,8 +1173,8 @@ Proof.
     refine (diverge_name_let _ _ _
       (diverge_need_sound _ _ _ _ _ _ _ _ Hcon' Hterm' Hcorr' Hhole')); eauto.
   - apply: diverge_name_case.
-    apply: (diverge_need_sound _ _ H2 _ _ _ _ (cons (context_case pts') \o C)); eauto.
-  - move: (eval_need_sound _ _ _ _ H2 _ _ _ _ (cons (context_case pts') \o C) H0 H9 Hcorr Hhole) =>
+    apply: (diverge_need_sound _ _ H2 _ _ _ _ (List.cons (context_case pts') \o C)); eauto.
+  - move: (eval_need_sound _ _ _ _ H2 _ _ _ _ (List.cons (context_case pts') \o C) H0 H9 Hcorr Hhole) =>
       [ R' [ S' [ H2' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' ? ] ] ].
     have Hlt : i < size pts.
@@ -1025,11 +1182,11 @@ Proof.
         [ /(nth_default _) -> | // ].
       inversion 1. subst.
       by move: (PeanoNat.Nat.neq_succ_diag_l _ H14). }
-    have ? : forall d, nth d pts' i = (c, size ts', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
+    have ? : forall d, nth d pts' i = (c, size ls', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
     { rewrite (surjective_pairing (nth d pts' i)) -H11 -H12 H3.
       do 2 f_equal. apply: set_nth_default. congruence. }
-    have ? : forall j, j < i -> forall d t1, nth d pts' j = (c, size ts', t1) -> False => [ j Hlt' d | ].
-    { move: (H4 _ Hlt' d).
+    have ? : forall j d t1, nth d pts' j = (c, size ls', t1) -> i <= j => [ j d | ].
+    { move: (H4 j d).
       rewrite
         (surjective_pairing (nth d pts j))
         (surjective_pairing (nth d pts' j)) H11 H12 => Hcontra.
@@ -1037,18 +1194,19 @@ Proof.
       apply: Hcontra. f_equal. eauto. }
     have Hterm'' : corr_term
       (fun l1 l2 : nat => R' l1 l2 \/ S' l1 l2)
-      (subst (scat ts Var) t0)
-      (subst (scat ts' Var) (nth (0, 0, Var 0) pts' i).2).
+      (subst (scat (map Loc ls) Var) t0)
+      (subst (scat (map Loc ls') Var) (nth (0, 0, Var 0) pts' i).2).
     { apply: corr_term_subst => [ | x ].
       - move: H3 (H13 _ Hlt (0, 0, Var 0)) => ->.
         eauto using corr_term_impl.
-      - rewrite !nth_scat H12.
-        case (leqP (size ts) x) => ?.
-        + rewrite !nth_default -?H12; eauto.
-        + eauto using corr_term_impl. }
+      - rewrite !nth_scat.
+        case (leqP (size ls) x) => ?.
+        + rewrite !nth_default !size_map -?H12; eauto.
+        + rewrite !(nth_map 0) -? H12;
+          eauto using corr_term_impl. }
     have Hhole'' : trace_segment S'
       (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H' H2'
-      (subst (scat ts' Var) (nth (0, 0, Var 0) pts' i).2) C.
+      (subst (scat (map Loc ls') Var) (nth (0, 0, Var 0) pts' i).2) C.
     { apply: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). eauto. }
     apply: diverge_name_casematch; eauto.
 Qed.
@@ -1120,22 +1278,66 @@ Proof.
     + case: (value_cycle_need_disjoint _ _
         (corr_term_valueR _ _ _ Hterm' (eval_name_value _ _ _ _ Hcbn)) H1).
   - apply: diverge_name_appL.
-    apply: (IHcycle_need _ _ _ _ (cons (context_app t2') \o C)); eauto.
-  - move: (eval_need_sound _ _ _ _ H0 _ _ _ _ (cons (context_app t2') \o C) H3 H7 Hcorr Hhole) =>
+    apply: (IHcycle_need _ _ _ _ (List.cons (context_app t2') \o C)); eauto.
+  - move: (eval_need_sound _ _ _ _ H0 _ _ _ _ (List.cons (context_app t2') \o C) H3 H7 Hcorr Hhole) =>
       [ R' [ S' [ H2' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' Himpl ] ] ].
+    have Himpl' : forall l1 l2,
+      R' l1 l2 \/ S' l1 l2 ->
+      (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2.
+    { move => ? ? [ ]; eauto. }
+    have Hiso'' : iso_heap_segment
+      (fun l1 l2 => l1 = size H' /\ l2 = size H2')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t2))
+      (rcons H2' (Some t2')).
+    { move => ? ? [ -> -> ].
+      rewrite !nth_rcons !ltnn !eqxx.
+      repeat eexists. eauto using corr_term_impl. }
+    have Hcon'' : consistent
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H2' (Some t2')).
+    { apply: (consistent_segment_dom (fun l1 l2 => (R' l1 l2 \/ S' l1 l2) \/ l1 = size H' /\ l2 = size H2')).
+      - apply: consistent_segment_union.
+        + apply: consistent_segment_rcons.
+          apply: consistent_segment_cod; eauto.
+        + apply: iso_heap_segment_comp; eauto.
+          apply: iso_heap_segment_sym. eauto.
+        + move => ? ? ? HRS [ ? ? ]. subst.
+          case HRS =>
+            [ /(corr_heap_segment_boundL _ _ _ _ Hcorr')
+            | /(trace_segment_boundL _ _ _ _ _ _ Hhole') ];
+          by rewrite ltnn.
+      - move => ? ? [ [ | ] | ]; eauto. }
     have Hterm'' : corr_term
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2)
-      (subst (scons t2 Var) t0)
-      (subst (scons t2' Var) t').
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (subst (scons (Loc (size H')) Var) t0)
+      (subst (scons (Loc (size H2')) Var) t').
     { apply: corr_term_subst => [ | [ | ? ] ] /=; eauto.
       apply: corr_term_impl; eauto. }
+    have Hcorr'' : corr_heap_segment
+      (fun l1 l2 => R' l1 l2 \/ l1 = size H' /\ l2 = size H2')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t2))
+      (rcons H2' (Some t2')).
+    { apply: corr_heap_segment_union.
+      - apply: corr_heap_segment_rconsL.
+        apply: corr_heap_segment_cod.
+        + apply: corr_heap_segment_rconsR; eauto.
+          move => /=. eauto.
+        + eauto.
+      - apply: iso_heap_segment_corr_heap_segment. eauto. }
     have Hhole'' : trace_segment S'
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H' H2'
-      (subst (scons t2' Var) t') C.
-    { exact: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). }
-    refine (diverge_name_appabs _ _ _ _ _ _
-      (IHcycle_need _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'')); eauto.
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H' /\ l2 = size H2') \/ S' l1 l2)
+      (rcons H' (Some t2))
+      (rcons H2' (Some t2'))
+      (subst (scons (Loc (size H2')) Var) t') C.
+    { apply: (trace_segment_weaken _ _ _ _ _ _ _ _ _ _
+        (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _)) =>
+      [ | | ? ? [ ] | ? ? /(trace_segment_boundL _ _ _ _ _ _ Hhole') Hlt | ]; eauto.
+      by rewrite size_rcons ltnS nth_rcons Hlt (ltnW Hlt). }
+    refine (diverge_name_beta _ _ _ _ _ _
+      (IHcycle_need _ _ _ _ _ Hcon'' Hterm'' Hcorr'' Hhole'')); eauto.
   - have Himpl : forall l1 l2,
       R l1 l2 \/ S l1 l2 ->
       ( R l1 l2 \/
@@ -1232,8 +1434,8 @@ Proof.
     refine (diverge_name_let _ _ _
       (IHcycle_need _ _ _ _ _ Hcon' Hterm' Hcorr' Hhole')).
   - apply: diverge_name_case.
-    apply: (IHcycle_need _ _ _ _ (cons (context_case pts') \o C) H1 H6 Hcorr Hhole).
-  - move: (eval_need_sound _ _ _ _ H0 _ _ _ _ (cons (context_case pts') \o C) H5 H9 Hcorr Hhole) =>
+    apply: (IHcycle_need _ _ _ _ (List.cons (context_case pts') \o C) H1 H6 Hcorr Hhole).
+  - move: (eval_need_sound _ _ _ _ H0 _ _ _ _ (List.cons (context_case pts') \o C) H5 H9 Hcorr Hhole) =>
       [ R' [ S' [ H2' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' ? ] ] ].
     have Hlt : i < size pts.
@@ -1241,11 +1443,11 @@ Proof.
         [ /(nth_default _) -> | // ].
       inversion 1. subst.
       by move: (PeanoNat.Nat.neq_succ_diag_l _ H14). }
-    have ? : forall d, nth d pts' i = (c, size ts', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
+    have ? : forall d, nth d pts' i = (c, size ls', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
     { rewrite (surjective_pairing (nth d pts' i)) -H12 -H11 H1.
       do 2 f_equal. apply: set_nth_default. congruence. }
-    have ? : forall j, j < i -> forall d t1, nth d pts' j = (c, size ts', t1) -> False => [ j Hlt' d | ].
-    { move: (H2 _ Hlt' d).
+    have ? : forall j d t1, nth d pts' j = (c, size ls', t1) -> i <= j => [ j d | ].
+    { move: (H2 j d).
       rewrite
         (surjective_pairing (nth d pts j))
         (surjective_pairing (nth d pts' j)) H11 H12 => Hcontra.
@@ -1253,18 +1455,19 @@ Proof.
       apply: Hcontra. f_equal. eauto. }
     have Hterm'' : corr_term
       (fun l1 l2 : nat => R' l1 l2 \/ S' l1 l2)
-      (subst (scat ts Var) t0)
-      (subst (scat ts' Var) (nth (0, 0, Var 0) pts' i).2).
+      (subst (scat (map Loc ls) Var) t0)
+      (subst (scat (map Loc ls') Var) (nth (0, 0, Var 0) pts' i).2).
     { apply: corr_term_subst => [ | x ].
       - move: H1 (H13 _ Hlt (0, 0, Var 0)) => ->.
         eauto using corr_term_impl.
-      - rewrite !nth_scat H12.
-        case (leqP (size ts) x) => ?.
-        + rewrite !nth_default -?H12; eauto.
-        + eauto using corr_term_impl. }
+      - rewrite !nth_scat.
+        case (leqP (size ls) x) => ?.
+        + rewrite !nth_default !size_map -?H12; eauto.
+        + rewrite !(nth_map 0) -?H12;
+          eauto using corr_term_impl. }
     have Hhole'' : trace_segment S'
       (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H' H2'
-      (subst (scat ts' Var) (nth (0, 0, Var 0) pts' i).2) C.
+      (subst (scat (map Loc ls') Var) (nth (0, 0, Var 0) pts' i).2) C.
     { apply: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). eauto. }
     refine (diverge_name_casematch _ _ _ _ _ _ _ _ _ _ _ (IHcycle_need _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'')); eauto.
 Qed.
@@ -1433,20 +1636,64 @@ Proof.
   - refine (False_ind _
       (eval_name_diverge_name_disjoint _ _ _ _ _
         (cycle_need_sound _ _ _ _ _ _ _ _ H3 H4 Hcorr Hhole))); eauto.
-  - move: (IHeval_name1 _ _ _ _ (cons (context_app t2) \o C) H3 H8 Hcorr Hhole) =>
+  - move: (IHeval_name1 _ _ _ _ (List.cons (context_app t2) \o C) H3 H8 Hcorr Hhole) =>
       [ R' [ S' [ H1' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' Himpl ] ] ].
+    have Himpl' : forall l1 l2,
+      R' l1 l2 \/ S' l1 l2 ->
+      (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2.
+    { move => ? ? [ ]; eauto. }
+    have Hiso'' : iso_heap_segment
+      (fun l1 l2 => l1 = size H1' /\ l2 = size H')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H1' (Some t5))
+      (rcons H' (Some t2)).
+    { move => ? ? [ -> -> ].
+      rewrite !nth_rcons !ltnn !eqxx.
+      repeat eexists. eauto using corr_term_impl. }
+    have Hcon'' : consistent
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H' (Some t2)).
+    { apply: (consistent_segment_dom (fun l1 l2 => (R' l1 l2 \/ S' l1 l2) \/ l1 = size H1' /\ l2 = size H')).
+      - apply: consistent_segment_union.
+        + apply: consistent_segment_rcons.
+          apply: consistent_segment_cod; eauto.
+        + apply: iso_heap_segment_comp; eauto.
+          apply: iso_heap_segment_sym. eauto.
+        + move => ? ? ? HRS [ ? ? ]. subst.
+          case HRS =>
+            [ /(corr_heap_segment_boundL _ _ _ _ Hcorr')
+            | /(trace_segment_boundL _ _ _ _ _ _ Hhole') ];
+          by rewrite ltnn.
+      - move => ? ? [ [ | ] | ]; eauto. }
     have Hterm'' : corr_term
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2)
-      (subst (scons t5 Var) t)
-      (subst (scons t2 Var) t0).
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (subst (scons (Loc (size H1')) Var) t)
+      (subst (scons (Loc (size H')) Var) t0).
     { apply: corr_term_subst => [ | [ | ? ] ] /=; eauto.
       apply: corr_term_impl; eauto. }
+    have Hcorr'' : corr_heap_segment
+      (fun l1 l2 => R' l1 l2 \/ l1 = size H1' /\ l2 = size H')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H1' (Some t5))
+      (rcons H' (Some t2)).
+    { apply: corr_heap_segment_union.
+      - apply: corr_heap_segment_rconsL.
+        apply: corr_heap_segment_cod.
+        + apply: corr_heap_segment_rconsR; eauto.
+          move => /=. eauto.
+        + eauto.
+      - apply: iso_heap_segment_corr_heap_segment. eauto. }
     have Hhole'' : trace_segment S'
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H1' H'
-      (subst (scons t2 Var) t0) C.
-    { exact: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). }
-    move: (IHeval_name2 _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'') =>
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H1' (Some t5))
+      (rcons H' (Some t2))
+      (subst (scons (Loc (size H')) Var) t0) C.
+    { apply: (trace_segment_weaken _ _ _ _ _ _ _ _ _ _
+        (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _)) =>
+      [ | | ? ? [ ] | ? ? /(trace_segment_boundL _ _ _ _ _ _ Hhole') Hlt | ]; eauto.
+      by rewrite size_rcons ltnS nth_rcons Hlt (ltnW Hlt). }
+    move: (IHeval_name2 _ _ _ _ _ Hcon'' Hterm'' Hcorr'' Hhole'') =>
       [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ] ] ] ] ].
     repeat (eexists; eauto).
   - repeat (eexists; eauto).
@@ -1547,7 +1794,85 @@ Proof.
       [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ] ] ] ] ].
     repeat (eexists; eauto).
   - repeat (eexists; eauto).
-  - move: (IHeval_name1 _ _ _ _ (cons (context_case pts) \o C) H5 H9 Hcorr Hhole) =>
+  - have Himpl : forall l1 l2,
+      R l1 l2 \/ S l1 l2 ->
+      ( R l1 l2 \/
+        exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n ) \/
+      S l1 l2.
+    { move => ? ? [ ]; eauto. }
+    have Hiso' : iso_heap_segment
+      (fun l1 l2 => exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n )
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n ) \/
+        S l1 l2 )
+      (H1 ++ map Some ts0) (H ++ map Some ts).
+    { move => ? ? [ x [ ? [ -> -> ] ] ].
+      rewrite !nth_cat !ltnNge !leq_addr !addKn !(nth_map (Var 0)); try congruence.
+      repeat eexists. eauto using corr_term_impl. }
+    have Hcon' : consistent
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n ) \/
+        S l1 l2 )
+      (H ++ map Some ts).
+    { apply: (consistent_segment_dom
+        (fun l1 l2 =>
+          ( R l1 l2 \/ S l1 l2 ) \/
+          exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n)).
+      - apply: consistent_segment_union.
+        + apply: consistent_segment_cat.
+          apply: consistent_segment_cod; eauto.
+        + apply: iso_heap_segment_comp; eauto.
+          apply: iso_heap_segment_sym. eauto.
+        + move => ? ? ? HRS [ ? [ Hlt [ ? ? ] ] ]. subst.
+          case HRS =>
+            [ /(corr_heap_segment_boundL _ _ _ _ Hcorr)
+            | /(trace_segment_boundL _ _ _ _ _ _ Hhole) ];
+          by rewrite ltnNge leq_addr.
+      - move => ? ? [ [ ] | ]; eauto. }
+    have Hterm' : corr_term
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n ) \/
+        S l1 l2)
+      (VCons c (mkseq (addn (size H1)) (size ts0)))
+      (VCons c (mkseq (addn (size H)) (size ts))).
+    { (constructor; rewrite !size_mkseq) => [ | ? ? ? ];
+      rewrite ?nth_mkseq -?H5; eauto 6. }
+    have Hcorr' : corr_heap_segment
+      (fun l1 l2 =>
+        R l1 l2 \/
+        exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n)
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n ) \/
+        S l1 l2 )
+      (H1 ++ map Some ts0) (H ++ map Some ts).
+    { apply: corr_heap_segment_union.
+      - apply: corr_heap_segment_catL.
+        apply: corr_heap_segment_cod.
+        + apply: corr_heap_segment_catR; eauto.
+          move => /=. eauto.
+        + eauto.
+      - apply: iso_heap_segment_corr_heap_segment. eauto. }
+    have Hhole' : trace_segment S
+      (fun l1 l2 =>
+        ( R l1 l2 \/
+          exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n ) \/
+        S l1 l2 )
+      (H1 ++ map Some ts0) (H ++ map Some ts)
+      (VCons c (mkseq (addn (size H)) (size ts))) C.
+    { apply: (trace_segment_weaken _ _ _ _ _ _ _ _ _ _
+        (trace_segment_red_name _ _ _ _ _ _ _ _ Hhole _)) =>
+      [ | | ? ? [ ] | ? ? /(trace_segment_boundL _ _ _ _ _ _ Hhole) Hlt | ]; eauto.
+      by rewrite size_cat nth_cat Hlt (ltn_addr _ Hlt). }
+    exists
+      ( fun l1 l2 =>
+        R l1 l2 \/
+        exists n, n < size ts0 /\ l1 = size H1 + n /\ l2 = size H + n ), S,
+      (H1 ++ map Some ts0), (VCons c (mkseq (addn (size H1)) (size ts0))). eauto 6.
+  - move: (IHeval_name1 _ _ _ _ (List.cons (context_case pts) \o C) H5 H9 Hcorr Hhole) =>
       [ R' [ S' [ H2' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' ? ] ] ].
     have Hlt : i < size pts.
@@ -1555,11 +1880,11 @@ Proof.
         [ /(nth_default _) -> | // ].
       inversion 1. subst.
       by move: (PeanoNat.Nat.neq_succ_diag_l _ H11). }
-    have ? : forall d, nth d pts0 i = (c, size ts0, (nth (0, 0, Var 0) pts0 i).2) => [ d | ].
+    have ? : forall d, nth d pts0 i = (c, size ls0, (nth (0, 0, Var 0) pts0 i).2) => [ d | ].
     { rewrite (surjective_pairing (nth d pts0 i)) H12 H14 H1 => /=.
       do 2 f_equal. apply: set_nth_default. congruence. }
-    have ? : forall j, j < i -> forall d t1, nth d pts0 j = (c, size ts0, t1) -> False => [ j Hlt' d | ].
-    { move: (H2 _ Hlt' d).
+    have ? : forall j d t1, nth d pts0 j = (c, size ls0, t1) -> i <= j => [ j d | ].
+    { move: (H2 j d).
       rewrite
         (surjective_pairing (nth d pts0 j))
         (surjective_pairing (nth d pts j)) H12 H14 => Hcontra.
@@ -1567,19 +1892,20 @@ Proof.
       apply: Hcontra. f_equal. eauto. }
     have Hterm'' : corr_term
       (fun l1 l2 : nat => R' l1 l2 \/ S' l1 l2)
-      (subst (scat ts0 Var) (nth (0, 0, Var 0) pts0 i).2)
-      (subst (scat ts Var) t0).
+      (subst (scat (map Loc ls0) Var) (nth (0, 0, Var 0) pts0 i).2)
+      (subst (scat (map Loc ls) Var) t0).
     { apply: corr_term_subst => [ | x ].
       - move: H10 Hlt => <- /H13 /(_ (0, 0, Var 0)).
         rewrite H1.
         eauto using corr_term_impl.
-      - rewrite !nth_scat H14.
-        case (leqP (size ts) x) => ?.
-        + rewrite !nth_default -?H14; eauto.
-        + eauto using corr_term_impl. }
+      - rewrite !nth_scat.
+        case (leqP (size ls) x) => ?.
+        + rewrite !nth_default !size_map -?H14; eauto.
+        + rewrite !(nth_map 0) -?H14;
+          eauto 6 using corr_term_impl. }
     have Hhole'' : trace_segment S'
       (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H2' H'
-      (subst (scat ts Var) t0) C.
+      (subst (scat (map Loc ls) Var) t0) C.
     { refine (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). eauto 6. }
     move: (IHeval_name2 _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'') =>
       [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ] ] ] ] ].
@@ -1647,22 +1973,66 @@ Proof.
       * case: (eval_name_diverge_name_disjoint _ _ _ _ Hcbn H3).
     + by case HNcycle; eauto.
   - apply: diverge_need_appL.
-    refine (diverge_need_complete_aux _ _ _ _ _ _ _ (cons (context_app t0) \o C) Hcon H6 Hcorr Hhole _); eauto.
-  - move: (eval_need_complete _ _ _ _ H1 _ _ _ _ (cons (context_app t3) \o C) Hcon H7 Hcorr Hhole) =>
+    refine (diverge_need_complete_aux _ _ _ _ _ _ _ (List.cons (context_app t0) \o C) Hcon H6 Hcorr Hhole _); eauto.
+  - move: (eval_need_complete _ _ _ _ H1 _ _ _ _ (List.cons (context_app t3) \o C) Hcon H7 Hcorr Hhole) =>
       [ R' [ S' [ H1' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' Himpl ] ] ].
+    have Himpl' : forall l1 l2,
+      R' l1 l2 \/ S' l1 l2 ->
+      (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2.
+    { move => ? ? [ ]; eauto. }
+    have Hiso'' : iso_heap_segment
+      (fun l1 l2 => l1 = size H1' /\ l2 = size H')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H1' (Some t4))
+      (rcons H' (Some t3)).
+    { move => ? ? [ -> -> ].
+      rewrite !nth_rcons !ltnn !eqxx.
+      repeat eexists. eauto using corr_term_impl. }
+    have Hcon'' : consistent
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H' (Some t3)).
+    { apply: (consistent_segment_dom (fun l1 l2 => (R' l1 l2 \/ S' l1 l2) \/ l1 = size H1' /\ l2 = size H')).
+      - apply: consistent_segment_union.
+        + apply: consistent_segment_rcons.
+          apply: consistent_segment_cod; eauto.
+        + apply: iso_heap_segment_comp; eauto.
+          apply: iso_heap_segment_sym. eauto.
+        + move => ? ? ? HRS [ ? ? ]. subst.
+          case HRS =>
+            [ /(corr_heap_segment_boundL _ _ _ _ Hcorr')
+            | /(trace_segment_boundL _ _ _ _ _ _ Hhole') ];
+          by rewrite ltnn.
+      - move => ? ? [ [ | ] | ]; eauto. }
     have Hterm'' : corr_term
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2)
-      (subst (scons t4 Var) t)
-      (subst (scons t3 Var) t0).
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (subst (scons (Loc (size H1')) Var) t)
+      (subst (scons (Loc (size H')) Var) t0).
     { apply: corr_term_subst => [ | [ | ? ] ] /=; eauto.
       apply: corr_term_impl; eauto. }
+    have Hcorr'' : corr_heap_segment
+      (fun l1 l2 => R' l1 l2 \/ l1 = size H1' /\ l2 = size H')
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H1' (Some t4))
+      (rcons H' (Some t3)).
+    { apply: corr_heap_segment_union.
+      - apply: corr_heap_segment_rconsL.
+        apply: corr_heap_segment_cod.
+        + apply: corr_heap_segment_rconsR; eauto.
+          move => /=. eauto.
+        + eauto.
+      - apply: iso_heap_segment_corr_heap_segment. eauto. }
     have Hhole'' : trace_segment S'
-      (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H1' H'
-      (subst (scons t3 Var) t0) C.
-    { apply: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole'). eauto. }
-    refine (diverge_need_appabs _ _ _ _ _ _
-      (diverge_need_complete_aux _ _ _ _ _ _ _ _ Hcon' Hterm'' Hcorr' Hhole'' _)); eauto.
+      (fun l1 l2 => (R' l1 l2 \/ l1 = size H1' /\ l2 = size H') \/ S' l1 l2)
+      (rcons H1' (Some t4))
+      (rcons H' (Some t3))
+      (subst (scons (Loc (size H')) Var) t0) C.
+    { apply: (trace_segment_weaken _ _ _ _ _ _ _ _ _ _
+        (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _)) =>
+      [ | | ? ? [ ] | ? ? /(trace_segment_boundL _ _ _ _ _ _ Hhole') Hlt | ]; eauto.
+      by rewrite size_rcons ltnS nth_rcons Hlt (ltnW Hlt). }
+    refine (diverge_need_beta _ _ _ _ _ _
+      (diverge_need_complete_aux _ _ _ _ _ _ _ _ Hcon'' Hterm'' Hcorr'' Hhole'' _)); eauto.
   - have Himpl : forall l1 l2,
       R l1 l2 \/ S l1 l2 ->
       ( R l1 l2 \/
@@ -1759,8 +2129,8 @@ Proof.
     refine (diverge_need_let _ _ _
       (diverge_need_complete_aux _ _ _ _ _ _ _ _ Hcon' Hterm' Hcorr' Hhole' _)); eauto.
   - refine (diverge_need_case _ _ _
-      (diverge_need_complete_aux _ _ _ _ _ _ _ (cons (context_case pts) \o C) Hcon H5 Hcorr Hhole _)); eauto.
-  - move: (eval_need_complete _ _ _ _ H1 _ _ _ _ (cons (context_case pts) \o C) Hcon H8 Hcorr Hhole) =>
+      (diverge_need_complete_aux _ _ _ _ _ _ _ (List.cons (context_case pts) \o C) Hcon H5 Hcorr Hhole _)); eauto.
+  - move: (eval_need_complete _ _ _ _ H1 _ _ _ _ (List.cons (context_case pts) \o C) Hcon H8 Hcorr Hhole) =>
       [ R' [ S' [ H1' [ ? [ ? [ Hcon' [ ] ] ] ] ] ] ].
     inversion 1. subst => [ [ Hcorr' [ Hhole' ? ] ] ].
     have Hlt : i < size pts.
@@ -1768,11 +2138,11 @@ Proof.
         [ /(nth_default _) -> | // ].
       inversion 1. subst.
       by move: (PeanoNat.Nat.neq_succ_diag_l _ H10). }
-    have ? : forall d, nth d pts0 i = (c, size ts0, (nth (0, 0, Var 0) pts0 i).2) => [ d | ].
+    have ? : forall d, nth d pts0 i = (c, size ls0, (nth (0, 0, Var 0) pts0 i).2) => [ d | ].
     { rewrite (surjective_pairing (nth d pts0 i)) H11 H13 H3 => /=.
       do 2 f_equal. apply: set_nth_default. congruence. }
-    have ? : forall j, j < i -> forall d t1, nth d pts0 j = (c, size ts0, t1) -> False => [ j Hlt' d | ].
-    { move: (H4 _ Hlt' d).
+    have ? : forall j d t1, nth d pts0 j = (c, size ls0, t1) -> i <= j => [ j d | ].
+    { move: (H4 j d).
       rewrite
         (surjective_pairing (nth d pts0 j))
         (surjective_pairing (nth d pts j)) H11 H13 => Hcontra.
@@ -1780,19 +2150,20 @@ Proof.
       apply: Hcontra. f_equal. eauto. }
     have Hterm'' : corr_term
       (fun l1 l2 : nat => R' l1 l2 \/ S' l1 l2)
-      (subst (scat ts0 Var) (nth (0, 0, Var 0) pts0 i).2)
-      (subst (scat ts Var) t0).
+      (subst (scat (map Loc ls0) Var) (nth (0, 0, Var 0) pts0 i).2)
+      (subst (scat (map Loc ls) Var) t0).
     { apply: corr_term_subst => [ | x ].
       - move: H9 Hlt => <- /H12 /(_ (0, 0, Var 0)).
         rewrite H3.
         eauto using corr_term_impl.
-      - rewrite !nth_scat H13.
-        case (leqP (size ts) x) => ?.
-        + rewrite !nth_default -?H14; eauto.
-        + eauto using corr_term_impl. }
+      - rewrite !nth_scat.
+        case (leqP (size ls) x) => ?.
+        + rewrite !nth_default !size_map -?H13; eauto.
+        + rewrite !(nth_map 0) -?H13;
+          eauto 6 using corr_term_impl. }
     have Hhole'' : trace_segment S'
       (fun l1 l2 => R' l1 l2 \/ S' l1 l2) H1' H'
-      (subst (scat ts Var) t0) C.
+      (subst (scat (map Loc ls) Var) t0) C.
     { apply: (trace_segment_red_name _ _ _ _ _ _ _ C Hhole' _). eauto. }
     apply: diverge_need_casematch; eauto.
 Qed.

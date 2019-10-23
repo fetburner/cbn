@@ -1,7 +1,7 @@
 From mathcomp Require Import all_ssreflect.
 Require Import Util.
 
-Definition ctor := nat.
+Definition cons := nat.
 
 Inductive term : Type :=
   | Var of nat
@@ -9,8 +9,9 @@ Inductive term : Type :=
   | Abs of term
   | App of term & term
   | Let of seq term & term
-  | Ctor of ctor & seq term
-  | Case of term & seq (ctor * nat * term).
+  | VCons of cons & seq nat
+  | Cons of cons & seq term
+  | Case of term & seq (cons * nat * term).
 
 (* まず，まともな帰納法の原理を得る *)
 
@@ -21,7 +22,8 @@ Definition term_rect'
   (HAbs : forall t, P t -> P (Abs t))
   (HApp : forall t1, P t1 -> forall t2, P t2 -> P (App t1 t2))
   (HLet : forall ts, foldr (fun t => prod (P t)) unit ts -> forall t, P t -> P (Let ts t))
-  (HCtor : forall c ts, foldr (fun t => prod (P t)) unit ts -> P (Ctor c ts))
+  (HVCons : forall c ls, P (VCons c ls))
+  (HCons : forall c ts, foldr (fun t => prod (P t)) unit ts -> P (Cons c ts))
   (HCase : forall t, P t -> forall pts, foldr (fun pt => prod (P pt.2)) unit pts -> P (Case t pts)) :=
   fix term_ind t :=
     match t as t0 return P t0 with
@@ -34,7 +36,8 @@ Definition term_rect'
         | nil => tt
         | t :: ts => pair (term_ind t) (term_ind' ts)
         end) ts) _ (term_ind t)
-    | Ctor c ts => HCtor _ _ ((fix term_ind' ts :=
+    | VCons _ _ => HVCons _ _
+    | Cons _ ts => HCons _ _ ((fix term_ind' ts :=
         match ts as ts0 return foldr (fun t => prod (P t)) unit ts0 with
         | nil => tt
         | t :: ts => pair (term_ind t) (term_ind' ts)
@@ -69,7 +72,12 @@ Proof.
           (Sumbool.sumbool_and _ _ _ _
             (List.list_eq_dec term_eq_dec t11s t21s)
             (term_eq_dec t12 t22))
-    | Ctor c ts, Ctor c' ts' =>
+    | VCons c ls, VCons c' ls' =>
+        sumbool_cast _ _
+          (Sumbool.sumbool_and _ _ _ _
+            (PeanoNat.Nat.eq_dec c c')
+            (List.list_eq_dec PeanoNat.Nat.eq_dec ls ls'))
+    | Cons c ts, Cons c' ts' =>
         sumbool_cast _ _
           (Sumbool.sumbool_and _ _ _ _
             (PeanoNat.Nat.eq_dec c c')
@@ -112,18 +120,19 @@ Definition term_ind'
   (HAbs : forall t, P t -> P (Abs t))
   (HApp : forall t1, P t1 -> forall t2, P t2 -> P (App t1 t2))
   (HLet : forall ts, { in ts, forall t, P t } -> forall t, P t -> P (Let ts t))
-  (HCtor : forall c ts, { in ts, forall t, P t } -> P (Ctor c ts))
+  (HVCons : forall c ls, P (VCons c ls))
+  (HCons : forall c ts, { in ts, forall t, P t } -> P (Cons c ts))
   (HCase : forall t, P t ->
     forall pts, (forall c n t, (c, n, t) \in pts -> P t) -> P (Case t pts))
   : forall t, P t.
 Proof.
-  elim /term_rect' => [ | | | | ts IHts | ? ts IHts | ? ? pts IHpts ] //=.
+  elim /term_rect' => [ | | | | ts IHts | | ? ts IHts | ? ? pts IHpts ] //=.
   - apply: HLet.
     elim: ts IHts => /= [ ? ? | ? ? IHts [ ? ? ] ? ].
     + by rewrite in_nil.
     + rewrite in_cons => /orP [ /eqP -> // | ].
       exact: IHts.
-  - apply: HCtor.
+  - apply: HCons.
     elim: ts IHts => /= [ ? ? | ? ? IHts [ ? ? ] ? ].
     + by rewrite in_nil.
     + rewrite in_cons => /orP [ /eqP -> // | ].
@@ -146,7 +155,8 @@ Fixpoint rename_term r t :=
   | Let ts t =>
       let r' := upnren r (size ts) in
       Let (map (rename_term r') ts) (rename_term r' t)
-  | Ctor c ts => Ctor c (map (rename_term r) ts)
+  | VCons c ls => VCons c ls
+  | Cons c ts => Cons c (map (rename_term r) ts)
   | Case t pts =>
       Case (rename_term r t)
         (map (fun pt => (pt.1, rename_term (upnren r (pt.1.2)) pt.2)) pts)
@@ -192,7 +202,8 @@ Fixpoint subst_term s t :=
   | Let ts t =>
       let s' := upn s (size ts) in
       Let (map (subst_term s') ts) (subst_term s' t)
-  | Ctor c ts => Ctor c (map (subst_term s) ts)
+  | VCons c ls => VCons c ls
+  | Cons c ts => Cons c (map (subst_term s) ts)
   | Case t pts =>
       Case (subst_term s t)
         (map (fun pt => (pt.1, subst_term (upn s (pt.1.2)) pt.2)) pts)
