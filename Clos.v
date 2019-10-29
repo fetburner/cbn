@@ -88,13 +88,13 @@ Inductive corr_term (R : nat -> nat -> Prop) H : nat -> term -> term -> Prop :=
           (nth d ts x) (nth d ts' x) ) ->
       corr_term R H (size ts + n) t t' ->
       corr_term R H n (Let ts t) (Let ts' t')
-  | corr_term_vcons c ls ts ts' :
+  | corr_term_vcons n c ls ts ts' :
       size ls = size ts' ->
       ( forall x, x < size ls -> forall d,
         nth None H (nth d ls x) = Some (ts x) ) ->
       ( forall x, x < size ls -> forall d,
-        corr_term R H 0 (ts x) (nth d ts' x) ) ->
-      corr_term R H 0 (VCons c ls) (Cons c ts')
+        corr_term R H n (rename (addn n) (ts x)) (nth d ts' x) ) ->
+      corr_term R H n (VCons c ls) (Cons c ts')
   | corr_term_cons n c ts ts' :
       size ts = size ts' ->
       ( forall x, x < size ts -> forall d,
@@ -136,32 +136,36 @@ Lemma corr_term_impl :
   corr_term R' H' n t t'.
 Proof. induction 1; eauto. Qed.
 
-Lemma corr_term_subst :
-  forall R H n t t', corr_term R H n t t' ->
-  forall (R' : _ -> _ -> Prop) s m,
+Lemma corr_term_subst (R R' : _ -> _ -> Prop) f H H' :
+  ( forall l t, nth None H l = Some t -> nth None H' l = Some (f t) ) ->
+  forall n t t',
+  corr_term R H n t t' ->
+  forall s m,
   m <= n ->
-  (forall x, x < m -> s x = Var x) ->
-  (forall x, m <= x -> x < n -> exists l, s x = Loc l) ->
-  (forall l x, n <= x -> R l (x - n) -> R' l (x - m)) ->
-  (forall l x, s x = Loc l -> R' l (x - m)) ->
-  corr_term R' H m (subst s t) t'.
+  ( forall x, x < m -> s x = Var x ) ->
+  ( forall x, m <= x -> x < n ->
+    exists l, s x = Loc l /\ R' l (x - m) ) ->
+  ( forall l x, n <= x -> R l (x - n) -> R' l (x - m) ) ->
+  ( forall t, rename (addn m) (f t) = subst s (rename (addn n) t) ) ->
+  corr_term R' H' m (subst s t) t'.
 Proof.
-  have Hs_impl : forall n s m,
+  have Hvar_impl : forall n s m,
     (forall x, x < m -> s x = Var x) ->
-    (forall x : nat, x < n + m -> upn s n x = Var x).
+    (forall x, x < n + m -> upn s n x = Var x).
   { move => n ? ? Hs x ?.
     rewrite (eq_upn _ Var) => [ | ? ].
     - exact: upn_Var.
     - apply: Hs.
       by rewrite -(ltn_add2l n) subnKC. }
-  have Hs'_impl: forall ts s m n,
-    (forall x, m <= x -> x < n -> exists l, s x = Loc l) ->
-    (forall x, ts + m <= x -> x < ts + n -> exists l, upn s ts x = Loc l).
-  { move => ts ? m ? Hs' x ? ?.
-    rewrite upn_unfold.
+  have Hloc_impl : forall ts s n m,
+    ( forall x, m <= x -> x < n ->
+      exists l, s x = Loc l /\ R' l (x - m) ) ->
+    ( forall x, ts + m <= x -> x < ts + n ->
+      exists l, upn s ts x = Loc l /\ R' l (x - (ts + m)) ).
+  { move => ts ? n m Hloc x ? ?.
     have Hleq := leq_trans (leq_addr m _).
-    rewrite ltnNge Hleq => //=.
-    case (Hs' (x - ts)) => [ | | ? -> /= ];
+    rewrite subnDA upn_unfold ltnNge Hleq => //=.
+    move: (Hloc (x - ts)) => [ | | ? [ -> ? /= ] ];
     [ rewrite -(leq_add2l ts) subnKC
     | rewrite -(ltn_add2l ts) subnKC | ]; eauto. }
   have HR_impl: forall ts (R R' : nat -> _) m n,
@@ -171,46 +175,46 @@ Proof.
     rewrite !subnDA. apply: HR.
     rewrite -(leq_add2l ts) subnKC => //.
     exact: (leq_trans (leq_addr n _)). }
-  have Hloc_impl : forall ts (R' : nat -> _) s m,
-    (forall l x, s x = Loc l -> R' l (x - m)) ->
-    (forall l x, upn s ts x = Loc l -> R' l (x - (ts + m))).
-  { move => ts ? s m Hloc ? x.
-    rewrite upn_unfold.
-    move: (leqP ts x) subnDA (Hloc^~ (x - ts)) => [ ? -> | // ].
-    case: (s (x - ts)); inversion 2; subst; eauto. }
-  induction 1 => ? ? m Hleq Hs Hs' HR Hloc /=; eauto using leq_trans.
-  - case (leqP m x) => Hlt.
-    + case: (Hs' _ Hlt H0) => ? Heq.
-      rewrite Heq; eauto.
-    + rewrite Hs; eauto.
+  have Hnth_impl : forall ts s n m,
+    ( forall t, rename (addn m) (f t) = subst s (rename (addn n) t) ) ->
+    ( forall t, rename (addn (ts + m)) (f t) = subst (upn s ts) (rename (addn (ts + n)) t) ).
+  { move => ts ? n m Hnth ?.
+    rewrite (eq_rename _ (addn (ts + m)) (addn ts \o addn m)) => [ | ? /= ].
+    - rewrite -rename_rename_comp Hnth !rename_subst_comp !subst_rename_comp.
+      apply: eq_subst => ?.
+      by rewrite /funcomp upn_unfold ltnNge -(addnA ts n) leq_addr addKn.
+    - by rewrite addnA. }
+  induction 2 => ? m Hleq Hvar Hloc HR Hnth /=; eauto using leq_trans.
+  - case (leqP m x) => Hge.
+    + move: (Hloc _ Hge H1) => [ ? [ -> ? ] ]. eauto.
+    + rewrite Hvar; eauto.
   - constructor.
     apply: IHcorr_term.
-    + exact Hleq.
-    + exact: (Hs_impl 1).
-    + exact: (Hs'_impl 1).
-    + exact: (HR_impl 1).
+    + exact: Hleq.
+    + exact: (Hvar_impl 1).
     + exact: (Hloc_impl 1).
+    + exact: (HR_impl 1).
+    + exact: (Hnth_impl 1).
   - ( constructor; rewrite size_map ) => // [ x ? d | ];
-    [ rewrite (nth_map d) => //; apply: H2 => // | apply: IHcorr_term ];
-    solve [ by rewrite leq_add2l | exact: Hs_impl | exact: Hs'_impl | exact: HR_impl | exact: Hloc_impl ].
-  - move: leqn0 Hleq => -> /eqP ?. subst.
-    (econstructor; eauto) => ? ? ?.
-    (apply: corr_term_impl; eauto) => l x.
-    move: subn0 (HR l x) => ->. eauto.
+    [ rewrite (nth_map d) => //; apply: H3 => // | apply: IHcorr_term ];
+    solve [ by rewrite leq_add2l | exact: Hvar_impl | exact: Hloc_impl | exact: HR_impl | exact: Hnth_impl ].
+  - apply: (corr_term_vcons _ _ _ _ _ (f \o ts)) => // ? Hlt d.
+    + apply: H0. exact: H2.
+    + rewrite Hnth. exact: H4.
   - constructor; rewrite ?size_map => // ? ? d.
     rewrite (nth_map d) => //.
-    apply: H2; eauto.
+    apply: H3; eauto.
   - ( constructor; rewrite ?size_map ) => [ | | x d | ? ? d ]; eauto.
     + case (leqP (size pts) x) => ?.
-      * by rewrite !nth_default ?size_map -?H1.
-      * by rewrite -H2 (nth_map d).
+      * by rewrite !nth_default ?size_map -?H2.
+      * by rewrite -H3 (nth_map d).
     + rewrite !(nth_map d) => //.
-      apply: H4 => //=.
+      apply: H5 => //=.
       * by rewrite leq_add2l.
-      * exact: Hs_impl.
-      * exact: Hs'_impl.
-      * exact: HR_impl.
+      * exact: Hvar_impl.
       * exact: Hloc_impl.
+      * exact: HR_impl.
+      * exact: Hnth_impl.
 Qed.
 
 Lemma corr_heap_impl :
@@ -294,12 +298,10 @@ Proof.
     have Hterm : corr_term
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0) (rcons H' (Some t2)) 0
       (subst (scons (Loc (size H')) Var) t0) t'.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H5 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      // [ l | [ | ? ] | ? [ | ? ] | ? [ | ? ] ] //=;
-      rewrite ?addn1 ?subn0 ?subn1 => /=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H5 _ _ _ _ _ _ _) =>
+      [ l | | | [ | ? ] ? ? /= | ? [ | ? ] /= | ? ] //; eauto.
       - by move: nth_rcons (leqP (size H') l) => -> [ /(nth_default _) -> | ].
-      - inversion 1. eauto. }
+      - by rewrite subst_rename_comp ?(eq_rename _ _ id) ?(eq_subst _ _ Var) ?rename_id ?subst_id. }
     have Hheap : corr_heap (rcons H' (Some t2))
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0)
       (Cat E [:: t2'] E').
@@ -324,17 +326,14 @@ Proof.
       (H ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H)) (size ts)) Var)) ts) 0
       (subst (scat (mkseq (Loc \o addn (size H)) (size ts)) Var) t) t'.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H12 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      [ l | | | ? ? | ? ? | ? x ];
-      rewrite ?addn0 ?subn0 ?nth_scat => //=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H12 _ _ _ _ _ _ _) =>
+      [ l | | // | ? ? | ? ? | ? ]; eauto.
       - by move: nth_cat (leqP (size H) l) => -> [ /(nth_default _) -> | ].
-      - move => ?.
-        rewrite nth_mkseq => //=; eauto.
-      - case (leqP (size ts) x) => ?.
-        + by rewrite !nth_default ?size_mkseq.
-        + rewrite nth_mkseq => //=.
-          inversion 1. subst. eauto. }
+      - rewrite addn0 subn0 => ?.
+        rewrite nth_scat nth_mkseq => /=; eauto.
+      - rewrite addn0 subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     have Hheap : corr_heap
       (H ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H)) (size ts)) Var)) ts)
@@ -350,17 +349,14 @@ Proof.
         + move: H8 => /= <-. eauto.
       - rewrite nth_cat ltnNge leq_addr addKn !(nth_map (Var 0)) => /=; try congruence.
         do 7 eexists => /=; eauto.
-        refine (corr_term_subst _ _ _ _ _
-          (corr_term_impl _ _ _ _ _ (H10 _ _ _) _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-        [ | l | | | ? ? | ? ? | ? y ] //;
-        rewrite ?addn0 ?subn0 ?nth_scat => //; eauto 3.
+        refine (corr_term_subst _ _ id _ _ _ _ _ _ (H10 _ _ _) _ _ _ _ _ _ _) =>
+        [ l | | | // | ? ? | ? ? | ? ]; eauto.
         + by move: nth_cat (leqP (size H) l) => -> [ /(nth_default _) -> | ].
-        + move => ?.
-          rewrite nth_mkseq => /=; eauto.
-        + case (leqP (size ts) y) => ?.
-          * by rewrite nth_default ?size_mkseq.
-          * rewrite nth_mkseq => //.
-            inversion 1. subst. eauto. }
+        + rewrite addn0 subn0 => ?.
+          rewrite nth_scat nth_mkseq => /=; eauto.
+        + rewrite addn0 subn0 => ?. eauto.
+        + rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+          by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     move: (IHeval_name _ _ _ Hheap Hterm) =>
       [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ].
     repeat (eexists; eauto).
@@ -371,7 +367,7 @@ Proof.
     + econstructor; rewrite size_mkseq => // x ? d.
       * rewrite nth_cat nth_mkseq => //.
         by rewrite ltnNge leq_addr addKn (nth_map (Var 0)).
-      * rewrite (set_nth_default d) => //.
+      * rewrite (eq_rename _ _ id) ?rename_id ?(set_nth_default d) => //.
         refine (corr_term_impl _ _ _ _ _ (H10 _ _ _) _ _ (fun _ _ H => H) _) => // l.
         by move: nth_cat (leqP (size H) l) => -> [ /(nth_default _) -> | ].
   - move: (IHeval_name1 _ _ _ H2 H9) => [ R' [ E' [ ? [ ? [ ] ] ] ] ].
@@ -380,7 +376,7 @@ Proof.
     { move: (leqP (size pts) i) (H0 (c.+1, 0, Var 0)) =>
         [ /(nth_default _) -> | // ].
       inversion 1.
-      by move: (PeanoNat.Nat.neq_succ_diag_l _ H13). }
+      by move: (PeanoNat.Nat.neq_succ_diag_l _ H8). }
     have ? : forall d, nth d pts' i = (c, size ts', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
     { rewrite (surjective_pairing (nth d pts' i))  -H12 H0 H7 => /=.
       do 2 f_equal. apply: set_nth_default. congruence. }
@@ -395,15 +391,13 @@ Proof.
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x) H' 0
       (subst (scat (map Loc ls) Var) t0) (nth (0, 0, Var 0) pts' i).2.
-    { apply: corr_term_subst => [ | | // | ? ? ? | ? ? ? ? | ? x ]; rewrite ?subn0 ?nth_scat.
-      - move: addn0 H0 (H14 _ Hlt (0, 0, Var 0)) => -> -> /= Hterm.
-        refine (corr_term_impl _ _ _ _ _ Hterm _ _ (fun _ _ H => H) (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      - by [].
-      - rewrite (nth_map 0); eauto.
-      - eauto.
-      - case (leqP (size ls) x) => ?.
-        + by rewrite nth_default ?size_map.
-        + rewrite (nth_map 0) => //. inversion 1. eauto. }
+    { refine (corr_term_subst _ _ id _ _ (Heaps.eval_name_heap _ _ _ _ H0_) _ _ _ _ _ _ (leq0n _) _ _ _ _) =>
+      [ | // | ? ? ? | ? ? ? | ? ].
+      - move: addn0 H0 (H14 _ Hlt (0, 0, Var 0)) => -> -> /=. apply.
+      - rewrite subn0 nth_scat (nth_map 0); eauto.
+      - rewrite subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_map ?addKn ?leq_addr. }
     have Hheap' : corr_heap H'
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x)
@@ -413,8 +407,9 @@ Proof.
         apply: corr_heap_catR.
         refine (corr_heap_impl _ _ _ _ _ _ (fun _ _ H => H)
           (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      + constructor => ? ? [ ? -> ] /=.
-        rewrite H8 ?(nth_map (Var 0)) -?H7 => //=.
+      + constructor => ? ? [ Hlt' -> ] /=.
+        move: (H15 _ Hlt').
+        rewrite (eq_rename _ _ id) ?rename_id ?H11 ?(nth_map (Var 0)) -?H7 => //=.
         repeat (eexists; eauto). }
     move: (IHeval_name2 _ _ _ Hheap' Hterm') =>
       [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ].
@@ -440,12 +435,10 @@ Proof.
     have ? : corr_term
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0) (rcons H' (Some t3)) 0
       (subst (scons (Loc (size H')) Var) t0) t'.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H5 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      // [ l | [ | ? ] | ? [ | ? ] | ? [ | ? ] ] //=;
-      rewrite ?addn1 ?subn0 ?subn1 => /=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H5 _ _ _ _ _ _ _) =>
+      [ l | | | [ | ? ] ? ? /= | ? [ | ? ] /= | ? ] //; eauto.
       - by move: nth_rcons (leqP (size H') l) => -> [ /(nth_default _) -> | ].
-      - inversion 1. eauto. }
+      - by rewrite subst_rename_comp ?(eq_rename _ _ id) ?(eq_subst _ _ Var) ?rename_id ?subst_id. }
     have Hheap : corr_heap (rcons H' (Some t3))
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0)
       (Cat E [:: t2'] E').
@@ -467,17 +460,14 @@ Proof.
       (H ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H)) (size ts)) Var)) ts) 0
       (subst (scat (mkseq (Loc \o addn (size H)) (size ts)) Var) t) t'.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H16 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      [ l | | | ? ? | ? ? | ? x ];
-      rewrite ?addn0 ?subn0 ?nth_scat => //=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H16 _ _ _ _ _ _ _) =>
+      [ l | | // | ? ? | ? ? | ? ]; eauto.
       - by move: nth_cat (leqP (size H) l) => -> [ /(nth_default _) -> | ].
-      - move => ?.
-        rewrite nth_mkseq => //=; eauto.
-      - case (leqP (size ts) x) => ?.
-        + by rewrite !nth_default ?size_mkseq.
-        + rewrite nth_mkseq => //=.
-          inversion 1. subst. eauto. }
+      - rewrite addn0 subn0 => ?.
+        rewrite nth_scat nth_mkseq => /=; eauto.
+      - rewrite addn0 subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     have Hheap : corr_heap
       (H ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H)) (size ts)) Var)) ts)
@@ -493,17 +483,14 @@ Proof.
         + move: H12 => /= <-. eauto.
       - rewrite nth_cat ltnNge leq_addr addKn !(nth_map (Var 0)) => /=; try congruence.
         do 7 eexists => /=; eauto.
-        refine (corr_term_subst _ _ _ _ _
-          (corr_term_impl _ _ _ _ _ (H14 _ _ _) _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-        [ | l | | | ? ? | ? ? | ? y ] //;
-        rewrite ?addn0 ?subn0 ?nth_scat => //; eauto 3.
+        refine (corr_term_subst _ _ id _ _ _ _ _ _ (H14 _ _ _) _ _ _ _ _ _ _) =>
+        [ l | | | // | ? ? | ? ? | ? ]; eauto.
         + by move: nth_cat (leqP (size H) l) => -> [ /(nth_default _) -> | ].
-        + move => ?.
-          rewrite nth_mkseq => /=; eauto.
-        + case (leqP (size ts) y) => ?.
-          * by rewrite nth_default ?size_mkseq.
-          * rewrite nth_mkseq => //.
-            inversion 1. subst. eauto. }
+        + rewrite addn0 subn0 => ?.
+          rewrite nth_scat nth_mkseq => /=; eauto.
+        + rewrite addn0 subn0 => ?. eauto.
+        + rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+          by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     apply: diverge_name_let. eauto.
   - apply: diverge_name_case. eauto.
   - move: (eval_name_sound _ _ _ _ H2 _ _ _ H8 H15) =>
@@ -513,7 +500,7 @@ Proof.
     { move: (leqP (size pts) i) (H3 (c.+1, 0, Var 0)) =>
         [ /(nth_default _) -> | // ].
       inversion 1.
-      by move: (PeanoNat.Nat.neq_succ_diag_l _ H13). }
+      by move: (PeanoNat.Nat.neq_succ_diag_l _ H10). }
     have ? : forall d, nth d pts' i = (c, size ts', (nth (0, 0, Var 0) pts' i).2) => [ d | ].
     { rewrite (surjective_pairing (nth d pts' i))  -H18 H3 H7 => /=.
       do 2 f_equal. apply: set_nth_default. congruence. }
@@ -528,15 +515,13 @@ Proof.
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x) H' 0
       (subst (scat (map Loc ls) Var) t0) (nth (0, 0, Var 0) pts' i).2.
-    { apply: corr_term_subst => [ | | // | ? ? ? | ? ? ? ? | ? x ]; rewrite ?subn0 ?nth_scat.
-      - move: addn0 H3 (H20 _ Hlt (0, 0, Var 0)) => -> -> /= Hterm.
-        refine (corr_term_impl _ _ _ _ _ Hterm _ _ (fun _ _ H => H) (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      - by [].
-      - rewrite (nth_map 0); eauto.
-      - eauto.
-      - case (leqP (size ls) x) => ?.
-        + by rewrite nth_default ?size_map.
-        + rewrite (nth_map 0) => //. inversion 1. eauto. }
+    { refine (corr_term_subst _ _ id _ _ (Heaps.eval_name_heap _ _ _ _ H2) _ _ _ _ _ _ (leq0n _) _ _ _ _) =>
+      [ | // | ? ? ? | ? ? ? | ? ].
+      - move: addn0 H3 (H20 _ Hlt (0, 0, Var 0)) => -> -> /=. apply.
+      - rewrite subn0 nth_scat (nth_map 0); eauto.
+      - rewrite subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_map ?addKn ?leq_addr. }
     have Hheap' : corr_heap H'
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x)
@@ -546,8 +531,9 @@ Proof.
         apply: corr_heap_catR.
         refine (corr_heap_impl _ _ _ _ _ _ (fun _ _ H => H)
           (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      + constructor => ? ? [ ? -> ] /=.
-        rewrite H10 ?(nth_map (Var 0)) -?H7 => //=.
+      + constructor => ? ? [ Hlt' -> ] /=.
+        move: (H14 _ Hlt').
+        rewrite (eq_rename _ _ id) ?rename_id ?H11 ?(nth_map (Var 0)) -?H7 => //=.
         repeat (eexists; eauto). }
     apply: diverge_name_casematch; eauto.
 Qed.
@@ -573,12 +559,10 @@ Proof.
     have Hterm : corr_term
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0) (rcons H' (Some t5)) 0
       (subst (scons (Loc (size H')) Var) t) t0.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H8 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      // [ l | [ | ? ] | ? [ | ? ] | ? [ | ? ] ] //=;
-      rewrite ?addn1 ?subn0 ?subn1 => /=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H8 _ _ _ _ _ _ _) =>
+      [ l | | | [ | ? ] ? ? /= | ? [ | ? ] /= | ? ] //; eauto.
       - by move: nth_rcons (leqP (size H') l) => -> [ /(nth_default _) -> | ].
-      - inversion 1. eauto. }
+      - by rewrite subst_rename_comp ?(eq_rename _ _ id) ?(eq_subst _ _ Var) ?rename_id ?subst_id. }
     have Hheap : corr_heap (rcons H' (Some t5))
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0)
       (Cat E [:: t2] E').
@@ -602,17 +586,14 @@ Proof.
       (H0 ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H0)) (size ts0)) Var)) ts0) 0
       (subst (scat (mkseq (Loc \o addn (size H0)) (size ts0)) Var) t0) t.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H12 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      [ l | | | ? ? | ? ? | ? x ];
-      rewrite ?addn0 ?subn0 ?nth_scat => //=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H12 _ _ _ _ _ _ _) =>
+      [ l | | // | ? ? | ? ? | ? ]; eauto.
       - by move: nth_cat (leqP (size H0) l) => -> [ /(nth_default _) -> | ].
-      - move => ?.
-        rewrite nth_mkseq => //=; eauto.
-      - case (leqP (size ts0) x) => ?.
-        + by rewrite !nth_default ?size_mkseq.
-        + rewrite nth_mkseq => //=.
-          inversion 1. subst. eauto. }
+      - rewrite addn0 subn0 => ?.
+        rewrite nth_scat nth_mkseq => /=; eauto.
+      - rewrite addn0 subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     have Hheap : corr_heap
       (H0 ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H0)) (size ts0)) Var)) ts0)
@@ -628,17 +609,14 @@ Proof.
         + move: H8 => /= <-. eauto.
       - rewrite nth_cat ltnNge leq_addr addKn !(nth_map (Var 0)) => /=; try congruence.
         do 7 eexists => /=; eauto.
-        refine (corr_term_subst _ _ _ _ _
-          (corr_term_impl _ _ _ _ _ (H11 _ _ _) _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-        [ | l | | | ? ? | ? ? | ? y ] //;
-        rewrite ?addn0 ?subn0 ?nth_scat => //; eauto 3.
+        refine (corr_term_subst _ _ id _ _ _ _ _ _ (H11 _ _ _) _ _ _ _ _ _ _) =>
+        [ l | | | // | ? ? | ? ? | ? ]; eauto.
         + by move: nth_cat (leqP (size H0) l) => -> [ /(nth_default _) -> | ].
-        + move => ?.
-          rewrite nth_mkseq => /=; eauto.
-        + case (leqP (size ts0) y) => ?.
-          * by rewrite nth_default ?size_mkseq.
-          * rewrite nth_mkseq => //.
-            inversion 1. subst. eauto. }
+        + rewrite addn0 subn0 => ?.
+          rewrite nth_scat nth_mkseq => /=; eauto.
+        + rewrite addn0 subn0 => ?. eauto.
+        + rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+          by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     move: (IHeval_name _ _ _ Hheap Hterm) =>
       [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ].
     repeat (eexists; eauto).
@@ -649,7 +627,7 @@ Proof.
     + econstructor; rewrite size_mkseq => // x ? d.
       * rewrite nth_cat nth_mkseq => //.
         by rewrite ltnNge leq_addr addKn (nth_map (Var 0)).
-      * rewrite (set_nth_default d) => //.
+      * rewrite (eq_rename _ _ id) ?rename_id ?(set_nth_default d) => //.
         refine (corr_term_impl _ _ _ _ _ (H10 _ _ _) _ _ (fun _ _ H => H) _) => // l.
         by move: nth_cat (leqP (size H) l) => -> [ /(nth_default _) -> | ].
   - move: (IHeval_name1 _ _ _ H4 H11) => [ R' [ H' [ ? [ Hcbn [ ] ] ] ] ].
@@ -661,40 +639,39 @@ Proof.
       inversion 1.
       by move: (PeanoNat.Nat.neq_succ_diag_l _ H9). }
     have ? : forall d, nth d pts0 i = (c, size ls, (nth (0, 0, Var 0) pts0 i).2) => [ d | ].
-    { rewrite (surjective_pairing (nth d pts0 i))  H15 H0 H14 => /=.
+    { rewrite (surjective_pairing (nth d pts0 i))  H15 H0 H17 => /=.
       do 2 f_equal. apply: set_nth_default. congruence. }
     have ? : forall j d t1, nth d pts0 j = (c, size ls, t1) -> i <= j => [ j d | ].
     { move: (H1 j d).
       rewrite
         (surjective_pairing (nth d pts0 j))
-        (surjective_pairing (nth d pts j)) !H15 H14 => Hcontra.
+        (surjective_pairing (nth d pts j)) !H15 H17 => Hcontra.
       inversion 1. subst.
       apply: Hcontra. f_equal. eauto. }
     have Hterm' : corr_term
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x) H' 0
       (subst (scat (map Loc ls) Var) (nth (0, 0, Var 0) pts0 i).2) t0.
-    { apply: corr_term_subst => [ | | // | ? ? ? | ? ? ? ? | ? x ]; rewrite ?subn0 ?nth_scat.
+    { refine (corr_term_subst _ _ id _ _ (Heaps.eval_name_heap _ _ _ _ Hcbn) _ _ _ _ _ _ (leq0n _) _ _ _ _) =>
+      [ | // | ? ? ? | ? ? ? | ? ].
       - move: H12 Hlt => <- /H16 /(_ (0, 0, Var 0)).
-        rewrite addn0 H15 H0 => /= Hterm.
-        refine (corr_term_impl _ _ _ _ _ Hterm _ _ (fun _ _ H => H) (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      - by [].
-      - rewrite (nth_map 0); eauto.
-      - rewrite H14. eauto.
-      - case (leqP (size ls) x) => ?.
-        + by rewrite nth_default ?size_map.
-        + rewrite (nth_map 0) => //. inversion 1. eauto. }
+        rewrite addn0 H15 H0 => /=. apply.
+      - rewrite H17 subn0 nth_scat (nth_map 0); eauto.
+      - rewrite H17 subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_map ?H17 ?addKn ?leq_addr. }
     have Hheap' : corr_heap H'
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x)
       (Cat E' ts E).
     { apply: corr_heap_union.
-      + rewrite H14.
+      + rewrite H17.
         apply: corr_heap_catR.
         refine (corr_heap_impl _ _ _ _ _ _ (fun _ _ H => H)
           (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      + constructor => ? ? [ ? -> ] /=.
-        rewrite H17 ?(nth_map (Var 0)) -?H14 => //=.
+      + constructor => ? ? [ Hlt' -> ] /=.
+        move: (H19 _ Hlt').
+        rewrite (eq_rename _ _ id) ?rename_id ?H18 ?(nth_map (Var 0)) -?H17 => //=.
         repeat (eexists; eauto). }
     move: (IHeval_name2 _ _ _ Hheap' Hterm') =>
       [ ? [ ? [ ? [ ? [ ? ? ] ] ] ] ].
@@ -721,12 +698,10 @@ Proof.
     have Hterm : corr_term
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0) (rcons H' (Some t6)) 0
       (subst (scons (Loc (size H')) Var) t) t0.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H8 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      // [ l | [ | ? ] | ? [ | ? ] | ? [ | ? ] ] //=;
-      rewrite ?addn1 ?subn0 ?subn1 => /=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H8 _ _ _ _ _ _ _) =>
+      [ l | | | [ | ? ] ? ? /= | ? [ | ? ] /= | ? ] //; eauto.
       - by move: nth_rcons (leqP (size H') l) => -> [ /(nth_default _) -> | ].
-      - inversion 1. eauto. }
+      - by rewrite subst_rename_comp ?(eq_rename _ _ id) ?(eq_subst _ _ Var) ?rename_id ?subst_id. }
     have Hheap : corr_heap (rcons H' (Some t6))
       (fun l x => 0 < x /\ R' l (x - 1) \/ l = size H' /\ x = 0)
       (Cat E [:: t3] E').
@@ -748,17 +723,14 @@ Proof.
       (H3 ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H3)) (size ts0)) Var)) ts0) 0
       (subst (scat (mkseq (Loc \o addn (size H3)) (size ts0)) Var) t0) t.
-    { refine (corr_term_subst _ _ _ _ _
-        (corr_term_impl _ _ _ _ _ H15 _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-      [ l | | | ? ? | ? ? | ? x ];
-      rewrite ?addn0 ?subn0 ?nth_scat => //=; eauto 3.
+    { refine (corr_term_subst _ _ id _ _ _ _ _ _ H15 _ _ _ _ _ _ _) =>
+      [ l | | // | ? ? | ? ? | ? ]; eauto.
       - by move: nth_cat (leqP (size H3) l) => -> [ /(nth_default _) -> | ].
-      - move => ?.
-        rewrite nth_mkseq => //=; eauto.
-      - case (leqP (size ts0) x) => ?.
-        + by rewrite !nth_default ?size_mkseq.
-        + rewrite nth_mkseq => //=.
-          inversion 1. subst. eauto. }
+      - rewrite addn0 subn0 => ?.
+        rewrite nth_scat nth_mkseq => /=; eauto.
+      - rewrite addn0 subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     have Hheap : corr_heap
       (H3 ++ map (@Some _ \o
         subst (scat (mkseq (Loc \o addn (size H3)) (size ts0)) Var)) ts0)
@@ -774,17 +746,14 @@ Proof.
         + move: H11 => /= <-. eauto.
       - rewrite nth_cat ltnNge leq_addr addKn !(nth_map (Var 0)) => /=; try congruence.
         do 7 eexists => /=; eauto.
-        refine (corr_term_subst _ _ _ _ _
-          (corr_term_impl _ _ _ _ _ (H14 _ _ _) _ _ (fun _ _ H => H) _) _ _ _ _ _ _ _ _) =>
-        [ | l | | | ? ? | ? ? | ? y ] //;
-        rewrite ?addn0 ?subn0 ?nth_scat => //; eauto 3.
+        refine (corr_term_subst _ _ id _ _ _ _ _ _ (H14 _ _ _) _ _ _ _ _ _ _) =>
+        [ l | | | // | ? ? | ? ? | ? ]; eauto.
         + by move: nth_cat (leqP (size H3) l) => -> [ /(nth_default _) -> | ].
-        + move => ?.
-          rewrite nth_mkseq => /=; eauto.
-        + case (leqP (size ts0) y) => ?.
-          * by rewrite nth_default ?size_mkseq.
-          * rewrite nth_mkseq => //.
-            inversion 1. subst. eauto. }
+        + rewrite addn0 subn0 => ?.
+          rewrite nth_scat nth_mkseq => /=; eauto.
+        + rewrite addn0 subn0 => ?. eauto.
+        + rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+          by rewrite nth_scat nth_default size_mkseq addn0 ?addKn ?leq_addr. }
     apply: Heaps.diverge_name_let; eauto.
   - apply: Heaps.diverge_name_case. eauto.
   - move: (eval_name_complete _ _ _ H0 _ _ _ H7 H14) => [ R' [ H' [ ? [ Hcbn [ ] ] ] ] ].
@@ -796,40 +765,39 @@ Proof.
       inversion 1.
       by move: (PeanoNat.Nat.neq_succ_diag_l _ H9). }
     have ? : forall d, nth d pts0 i = (c, size ls, (nth (0, 0, Var 0) pts0 i).2) => [ d | ].
-    { rewrite (surjective_pairing (nth d pts0 i))  H18 H1 H13 => /=.
+    { rewrite (surjective_pairing (nth d pts0 i))  H18 H1 H16 => /=.
       do 2 f_equal. apply: set_nth_default. congruence. }
     have ? : forall j d t1, nth d pts0 j = (c, size ls, t1) -> i <= j => [ j d | ].
     { move: (H2 j d).
       rewrite
         (surjective_pairing (nth d pts0 j))
-        (surjective_pairing (nth d pts j)) !H18 H13 => Hcontra.
+        (surjective_pairing (nth d pts j)) !H18 H16 => Hcontra.
       inversion 1. subst.
       apply: Hcontra. f_equal. eauto. }
     have Hterm' : corr_term
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x) H' 0
       (subst (scat (map Loc ls) Var) (nth (0, 0, Var 0) pts0 i).2) t0.
-    { apply: corr_term_subst => [ | | // | ? ? ? | ? ? ? ? | ? x ]; rewrite ?subn0 ?nth_scat.
+    { refine (corr_term_subst _ _ id _ _ (Heaps.eval_name_heap _ _ _ _ Hcbn) _ _ _ _ _ _ (leq0n _) _ _ _ _) =>
+      [ | // | ? ? ? | ? ? ? | ? ].
       - move: H15 Hlt => <- /H19 /(_ (0, 0, Var 0)).
-        rewrite addn0 H18 H1 => /= Hterm.
-        refine (corr_term_impl _ _ _ _ _ Hterm _ _ (fun _ _ H => H) (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      - by [].
-      - rewrite (nth_map 0); eauto.
-      - rewrite H13. eauto.
-      - case (leqP (size ls) x) => ?.
-        + by rewrite nth_default ?size_map.
-        + rewrite (nth_map 0) => //. inversion 1. eauto. }
+        rewrite addn0 H18 H1 => /=. apply.
+      - rewrite H16 subn0 nth_scat (nth_map 0); eauto.
+      - rewrite H16 subn0. eauto.
+      - rewrite (eq_rename _ _ id) ?rename_id ?subst_rename_comp ?(eq_subst _ _ Var) ?subst_id => //= ?.
+        by rewrite nth_scat nth_default size_map ?H16 ?addKn ?leq_addr. }
     have Hheap' : corr_heap H'
       (fun l x => size ls <= x /\ R l (x - size ls) \/
         x < size ls /\ l = nth 0 ls x)
       (Cat E' ts E).
     { apply: corr_heap_union.
-      + rewrite H13.
+      + rewrite H16.
         apply: corr_heap_catR.
         refine (corr_heap_impl _ _ _ _ _ _ (fun _ _ H => H)
           (Heaps.eval_name_heap _ _ _ _ _)); eauto.
-      + constructor => ? ? [ ? -> ] /=.
-        rewrite H16 ?(nth_map (Var 0)) -?H13 => //=.
+      + constructor => ? ? [ Hlt' -> ] /=.
+        move: (H20 _ Hlt').
+        rewrite (eq_rename _ _ id) ?rename_id ?H17 ?(nth_map (Var 0)) -?H16 => //=.
         repeat (eexists; eauto). }
     apply: Heaps.diverge_name_casematch; eauto.
 Qed.
